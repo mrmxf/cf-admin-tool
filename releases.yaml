@@ -1,0 +1,9 @@
+#  Copyright ©2017-2026  Mr MXF   info@mrmxf.com
+#  BSD-3-Clause License           https://opensource.org/license/bsd-3-clause/
+# this file is used by clog - see `clog BC releases --help`
+# flow:"stage",  build:"dev"  = auto-add to staging server
+# flow:"main",   build:"prod" = to flag as a production release
+# this is NOT a golang project, so tags have NO leading "v"
+
+- {version: "0.2.0", date: 2026-09-28, flow: main, build: prod, note: "first public release. BREAKING: forms, workflows and views move into formsPlugin({toRecord, list, workflows, views}) under config.plugins; views are at <root>/forms/views/<id> (was <root>?view=<id>). New: a plugin router - Worker-shaped fetch(request, env, ctx, admin) handlers mounted at one path segment, plus dashboard/health/flags hooks. Security: Fetch Metadata refuses non-navigation requests; plugins never see the admin cookies and cannot set them; plugin responses are forced no-store/nosniff/DENY; the same database work for every address typed in (no allowlist timing leak); rate limits keyed by hash; 10 codes and 20 wrong codes per address per day; Turnstile tokens must match the hostname"}
+- {version: "0.1.0", date: 2026-09-27, flow: main, build: prod, note: "developed inside its first consumer site, not released"}
