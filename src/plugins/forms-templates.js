@@ -23,6 +23,21 @@ function workflowCell(ctx, { form, record, workflow: w }) {
   return workflowButton(ctx, { form, record, workflow: w });
 }
 
+/** A value as one line of text: objects as JSON, undefined as "". */
+const flat = (v) => (v !== null && typeof v === "object" ? JSON.stringify(v) : String(v ?? ""));
+
+/**
+ * The mark on a cell whose ACTIVE value is not the submission's: an edit. The
+ * submitted value is in the title (and for screen readers, in the text).
+ */
+function editedMark(col, record, text) {
+  if (!record.submission || col.workflow) return "";
+  const was = cell(col, record.submission);
+  if (was === text) return "";
+  const note = `Edited. Submitted: ${was || "(empty)"}`;
+  return html` <span class="edited" title="${note}"><span aria-hidden="true">✏️</span><span class="sr">${note}</span></span>`;
+}
+
 /** The button that starts a workflow; disabled while it has no run(). */
 function workflowButton(ctx, { form, record, workflow: w }) {
   return html`<form class="inline" method="get" action="${ctx.base}/${form.id}/${record.id}/run/${w.id}"><button class="run" type="submit"${
@@ -49,10 +64,11 @@ export const FORMS_TEMPLATES = {
     const td = (col, r) => {
       if (col.workflow) return html`<td class="w">${workflowCell(ctx, { form, record: r, workflow: wf(col) })}</td>`;
       const text = cell(col, r);
+      const mark = editedMark(col, r, text);
       if (Number.isInteger(col.narrow) && text.length > col.narrow) {
-        return html`<td class="n"><span class="n-full">${text}</span><span class="n-short">${clip(text, col.narrow)}</span></td>`;
+        return html`<td class="n"><span class="n-full">${text}</span><span class="n-short">${clip(text, col.narrow)}</span>${mark}</td>`;
       }
-      return html`<td class="${colClass(col)}">${text}</td>`;
+      return html`<td class="${colClass(col)}">${text}${mark}</td>`;
     };
     return html`
     <p><a href="${ctx.base}">&larr; Forms</a></p>
@@ -88,8 +104,11 @@ export const FORMS_TEMPLATES = {
     const rows = view
       ? view.columns.filter((col) => !col.workflow || workflows).map((col) => [col.label, col.workflow
         ? workflowCell(ctx, { form, record, workflow: workflows.find((w) => w.id === col.workflow) })
-        : cell({ ...col }, record)])
-      : Object.entries(record.answers ?? {}).map(([k, v]) => [k, String(v ?? "")]);
+        : html`${cell(col, record)}${editedMark(col, record, cell(col, record))}`])
+      : Object.keys(record.answers ?? {}).map((k) => {
+        const col = { answer: k };
+        return [k, html`${cell(col, record)}${editedMark(col, record, cell(col, record))}`];
+      });
     return html`<div class="scroll"><table><tbody>
       <tr><th scope="row">Submitted</th><td>${ctx.fmtDateTime(record.timestamp)}</td></tr>
       ${rows.map(([k, v]) => html`<tr><th scope="row">${k}</th><td class="wrap-text">${v}</td></tr>`)}
@@ -188,19 +207,32 @@ export const FORMS_TEMPLATES = {
   /** data: {form, record, workflows} */
   formsRecord: (ctx, { form, record, workflows }) => {
     const known = (record.formMeta?.fields ?? []).map((f) => f.name);
-    const keys = [...known, ...Object.keys(record.answers ?? {}).filter((k) => !known.includes(k))];
-    const flat = (v) => (v !== null && typeof v === "object" ? JSON.stringify(v) : String(v ?? ""));
+    const sub = record.submission ?? record;
+    const keys = [...new Set([...known, ...Object.keys(record.answers ?? {}), ...Object.keys(sub.answers ?? {})])]
+      .filter((k) => Object.hasOwn(record.answers ?? {}, k) || Object.hasOwn(sub.answers ?? {}, k));
+    const edited = record.edited ?? [];
+    const answerEdited = (k) => edited.some((p) => p === "answers" || p === `answers.${k}` || p.startsWith(`answers.${k}.`));
+    const strip = ({ submission, edited: _, ...r }) => r;
     return html`
     <p><a href="${ctx.base}/${form.id}">&larr; ${form.label}</a></p>
     <h1>${ctx.fmtTime(record.timestamp)}</h1>
     <p class="meta">Outcome <strong>${record.outcome}</strong> · form version ${record.formMeta?.version || "?"} ·
       engine ${record.formMeta?.engine || "?"} · <code>${record.id}</code></p>
+    ${edited.length ? html`<p class="notice" role="note"><strong>Edited.</strong> This is the ACTIVE record: the submission
+      with ${edited.length} change${edited.length === 1 ? "" : "s"} applied (${edited.join(", ")}). The submission itself is
+      never changed; each edited answer shows it underneath, and History says who changed what and why.</p>` : ""}
 
     <h2>Answers</h2>
-    ${Object.keys(record.answers ?? {}).length === 0
+    ${keys.length === 0
       ? html`<p class="meta">None kept - answers are stored only for sent and send-failed submissions.</p>`
       : html`<div class="scroll"><table><tbody>${keys.map((k) => html`
-        <tr><th scope="row">${k}</th><td class="wrap-text">${record.answers[k] ?? ""}</td></tr>`)}</tbody></table></div>`}
+        <tr><th scope="row">${k}${answerEdited(k) ? html` <span class="edited" title="Edited">✏️</span>` : ""}</th><td class="wrap-text">${flat(record.answers?.[k])}${
+          answerEdited(k) ? html`<span class="was">Submitted: ${Object.hasOwn(sub.answers ?? {}, k) ? flat(sub.answers[k]) : "(not present)"}</span>` : ""}</td></tr>`)}</tbody></table></div>`}
+    ${record.submission ? html`<details class="json">
+      <summary>The whole record as JSON: active${edited.length ? " and submission" : ""}</summary>
+      <h3>Active</h3><pre>${JSON.stringify(strip(record), null, 2)}</pre>
+      ${edited.length ? html`<h3>Submission</h3><pre>${JSON.stringify(record.submission, null, 2)}</pre>` : ""}
+    </details>` : ""}
 
     <h2>Workflows</h2>
     <div class="wf-list">${workflows.length === 0 ? html`<p class="meta">None for this form.</p>` : workflows.map((w) => html`
@@ -213,7 +245,9 @@ export const FORMS_TEMPLATES = {
     <div class="scroll"><table>
       <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Status</th><th scope="col">Message</th><th scope="col">Took</th><th scope="col">By</th></tr></thead>
       <tbody>${(record.workflow?.events ?? []).map((e) => html`<tr>
-        <td>${ctx.fmtDateTime(e.timestamp)}</td><td>${e.event}</td><td>${e.status}</td><td>${e.statusMessage}${e.details ? html`<br><span class="meta">${e.details}</span>` : ""}</td>
+        <td>${ctx.fmtDateTime(e.timestamp)}</td><td>${e.event}</td><td>${e.status}</td><td>${e.statusMessage}${e.details ? html`<br><span class="meta">${e.details}</span>` : ""}${
+          e.changes?.length ? html`<ul class="changes">${e.changes.map((ch) => html`<li><code>${ch.path}</code>: ${
+            ch.from === undefined ? html`<em>(none)</em>` : flat(ch.from)} &rarr; ${ch.to === undefined ? html`<em>(removed)</em>` : flat(ch.to)}</li>`)}</ul>` : ""}</td>
         <td>${Number.isInteger(e.duration) ? `${(e.duration / 1000).toFixed(1)} s` : ""}</td><td>${e.actor ?? ""}</td></tr>`)}</tbody>
     </table></div>
 

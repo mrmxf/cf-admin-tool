@@ -128,6 +128,10 @@ const styles = (site) => `
   textarea { width: 100%; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: 4px;
     font: .9375rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--body); background: var(--surface); }
   .mail-preview { border: 1px solid var(--border); overflow: auto; color-scheme: light; }
+  .edited { cursor: help; }
+  .was { display: block; color: var(--meta); font-size: .875rem; }
+  ul.changes { margin: .25rem 0 0; padding-left: 1.1rem; font-size: .875rem; }
+  details.json summary { cursor: pointer; color: var(--link); margin: 1rem 0; }
   dl.pairs { display: grid; grid-template-columns: auto 1fr; gap: .25rem 1rem; margin: .5rem 0 1rem; }
   dl.pairs dt { font-weight: 700; color: var(--meta); }
   dl.pairs dd { margin: 0; overflow-wrap: anywhere; }

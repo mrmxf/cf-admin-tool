@@ -14,6 +14,11 @@
  * an email is allowed - it is what a workflow is for - but it must happen before
  * the event that says it did.
  *
+ * An event may carry a `patch` (src/patch.js): it still changes nothing in
+ * FORM_DB, but every reader then sees the ACTIVE record - the submission with
+ * the patches applied. `record` below is the active record; `record.submission`
+ * is what arrived, frozen.
+ *
  * run() is called for GET and POST <base>/<form>/<uid>/run/<id>, every page
  * headed "WORKFLOW: <label>" by the tool. args:
  *   method   "GET" (the start page) or "POST" (any later step)
@@ -24,7 +29,9 @@
  *   c        the template context: c.t (templates), c.site, c.fmtDate...
  *   env, request, user, now (a Date)
  * It returns ONE of:
- *   { body, status? }  another page (html``); nothing is recorded
+ *   { body, status?, scripts? }  another page (html``); nothing is recorded.
+ *                      `scripts`: JavaScript sources inlined after the body and
+ *                      allowed by their sha256 in that page's CSP only (csp.js)
  *   { back: true }     cancel: back to the view; nothing is recorded
  *   { event }          done: the event is checked and appended, then back
  *   { event, body }    the event is appended, then this page is shown - e.g. a

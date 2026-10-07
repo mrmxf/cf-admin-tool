@@ -28,6 +28,8 @@ src/templates.js   the core templates, DEFAULT_COPY, the theme CSS
 src/plugins/       formsPlugin and its templates
 src/modules/       forms (read-only FORM_DB), events (append-only log), health
 src/views.js, workflows.js, approval.js, markdown.js, dates.js   formsPlugin's parts
+src/patch.js       submission -> active: merge patches, diffs, the fixed fields
+src/csp.js         the CSP, and its per-page script hashes
 db/migrations/     ADMIN_DB. Shipped: consumers point migrations_dir here
 test/              fake D1 over node:sqlite + fixtures. Tests only, never shipped
 releases.yaml      version history, newest first. NOT a golang project: tags have no "v"
@@ -58,6 +60,15 @@ releases.yaml      version history, newest first. NOT a golang project: tags hav
 - **A workflow changes nothing.** Its only output is ONE event, checked by
   `checkEvent` and appended to `workflow_events`. Append-only: never an UPDATE or
   DELETE there; a schema change is a new migration.
+- **Submission and active** (`src/patch.js`). The submission is immutable. An
+  event's optional `patch` (RFC 7396) amends what the record IS in the admin, never
+  the row: `withEvents` returns the active record, every patch applied, with
+  `submission` frozen. Every page and every workflow reads records through
+  `withEvents`. `id` and `workflow` are never patchable. Queries (which rows) stay
+  on the submission.
+- **Scripts only by hash.** A workflow page's `scripts` are inlined and allowed by
+  their sha256 in that response's CSP (`src/csp.js`). No `'unsafe-inline'`, no CDN,
+  no script route.
 - **Migrations are append-only too.** Never edit what a shipped migration does; a new
   column is a new file.
 - **Security fixes need a test** that fails without them.

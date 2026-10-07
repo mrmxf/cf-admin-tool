@@ -38,4 +38,5 @@ export const AUTH_MIGRATIONS = new URL("../db/migrations/0001_auth.sql", import.
 export const EVENTS_MIGRATIONS = [
   new URL("../db/migrations/0002_workflow_events.sql", import.meta.url).pathname,
   new URL("../db/migrations/0003_workflow_event_details.sql", import.meta.url).pathname,
+  new URL("../db/migrations/0004_workflow_event_patch.sql", import.meta.url).pathname,
 ];

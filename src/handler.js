@@ -55,10 +55,12 @@
  *   NTFY_TOKEN            optional secret, for a server with access control
  *   DRY_RUN               "true" prints codes (localhost only) instead of sending
  *   ADMIN_ROOT            optional override of config.root
+ *   ADMIN_SESSION_TTL_S   optional, seconds: a session's absolute limit (auth.js SESSION_TTL_S)
+ *   ADMIN_SESSION_IDLE_S  optional, seconds: its idle limit (auth.js SESSION_IDLE_S)
  */
 
 import {
-  parseUsers, startLogin, challengeStage, verifyCode, resendNtfyCode, getSession, endSession,
+  parseUsers, sessionLimits, startLogin, challengeStage, verifyCode, resendNtfyCode, getSession, endSession,
   CODE_TTL_S, NTFY_TTL_S,
 } from "./auth.js";
 import { sendEmailCode, sendNtfyCode } from "./deliver.js";
@@ -66,23 +68,12 @@ import { verifyTurnstile } from "./turnstile.js";
 import { DEFAULT_TEMPLATES, DEFAULT_COPY, TOKENS } from "./templates.js";
 import { coreChecks, coreFlags } from "./modules/health.js";
 import { dateFormatters } from "./dates.js";
+import { CSP } from "./csp.js";
 
 const CHALLENGE_COOKIE = "__Host-admin-ch";
 const SESSION_COOKIE = "__Host-admin-s";
 const ADMIN_COOKIES = new Set([CHALLENGE_COOKIE, SESSION_COOKIE]);
 
-const CSP = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com",
-  "script-src https://challenges.cloudflare.com",
-  "frame-src https://challenges.cloudflare.com",
-  "connect-src https://challenges.cloudflare.com",
-  "img-src 'self' data:",
-  "form-action 'self'",
-  "base-uri 'none'",
-  "frame-ancestors 'none'",
-].join("; ");
 
 // Always set, whatever a plugin says: admin data is never cached, sniffed or framed.
 const FORCED_HEADERS = {
@@ -272,6 +263,7 @@ export function createAdmin(config) {
       }
       const { users, error: usersError } = parseUsers(env.ADMIN_USERS);
       if (usersError) console.log(`[admin] ${usersError} - nobody can sign in`);
+      const limits = sessionLimits(env);
       const jar = readCookies(request);
       const clearChallenge = cookie(CHALLENGE_COOKIE, "", 0);
 
@@ -279,7 +271,7 @@ export function createAdmin(config) {
       if (path === "/login") {
         const siteKey = env.TURNSTILE_SITE_KEY || "";
         if (GET) {
-          if (await getSession({ db, users, token: jar[SESSION_COOKIE] })) return redirect(root);
+          if (await getSession({ db, users, limits, token: jar[SESSION_COOKIE] })) return redirect(root);
           const error = url.searchParams.has("restart")
             ? "That sign-in expired or had too many wrong codes. Please start again." : "";
           return page("Sign in", templates.loginEmail(c, { error, siteKey }), { turnstile: true });
@@ -310,7 +302,7 @@ export function createAdmin(config) {
           return page("Sign in", templates.loginCode(c, { stage }));
         }
         const form = await request.formData();
-        const r = await verifyCode({ db, users, challengeId, code: form.get("code"), secondFactor });
+        const r = await verifyCode({ db, users, challengeId, code: form.get("code"), secondFactor, limits });
         if (!r.ok) {
           if (r.reason !== "wrong-code") return redirect(`${root}/login?restart=1`, [clearChallenge]);
           const stage = await challengeStage({ db, challengeId });
@@ -358,7 +350,7 @@ export function createAdmin(config) {
       }
 
       // ── everything below needs a session ──────────────────────────────────
-      const user = await getSession({ db, users, token: jar[SESSION_COOKIE] });
+      const user = await getSession({ db, users, limits, token: jar[SESSION_COOKIE] });
       if (!user) {
         return GET ? redirect(`${root}/login`, [cookie(SESSION_COOKIE, "", 0)]) : text("Forbidden", 403);
       }

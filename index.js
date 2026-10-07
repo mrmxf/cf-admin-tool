@@ -7,7 +7,8 @@
  *
  *   import { createAdmin, formsPlugin } from "@mrmxf/cf-admin-tool";
  *
- * `html` and `raw` are for templates and plugins; the rest is exported for tests.
+ * `html` and `raw` are for templates and plugins; the patch helpers are for
+ * workflows that edit a record (src/patch.js); the rest is exported for tests.
  */
 export { createAdmin, normaliseRoot, normalisePlugins } from "./src/handler.js";
 export { formsPlugin } from "./src/plugins/forms.js";
@@ -18,3 +19,5 @@ export { parseUsers } from "./src/auth.js";
 export { approvalWorkflow } from "./src/approval.js";
 export { renderMarkdown, fill } from "./src/markdown.js";
 export { dateFormatters } from "./src/dates.js";
+export { FIXED, mergePatch, diffPatch, changes, editable, checkPatch, isObject } from "./src/patch.js";
+export { scriptHash } from "./src/csp.js";

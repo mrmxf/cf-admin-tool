@@ -49,8 +49,8 @@
 export const CODE_TTL_S = 10 * 60;         // an email-stage challenge
 export const NTFY_TTL_S = 5 * 60;          // the ntfy stage, from when its code is sent
 export const MAX_ATTEMPTS = 5;             // per stage; then the challenge is burned
-export const SESSION_TTL_S = 8 * 60 * 60;  // absolute
-export const SESSION_IDLE_S = 60 * 60;     // since last request
+export const SESSION_TTL_S = 18 * 60 * 60; // absolute: a long waking day
+export const SESSION_IDLE_S = 3 * 60 * 60; // since last request: a lunch break and two calls
 export const SEND_LIMIT = 3;               // codes emailed per address per window
 export const SEND_WINDOW_S = 15 * 60;
 export const SEND_DAILY_LIMIT = 10;        // ...and per address per day
@@ -63,6 +63,26 @@ const TOUCH_EVERY_S = 60;                  // last_seen writes at most once a mi
 const NTFY_TOPIC = /^[A-Za-z0-9_-]{1,64}$/;
 
 export const nowS = () => Math.floor(Date.now() / 1000);
+
+/**
+ * Session lifetimes, from the optional ADMIN_SESSION_TTL_S / ADMIN_SESSION_IDLE_S
+ * vars. A missing value takes the default; a value that is not a whole number of
+ * seconds > 0 also takes the default, with a log line.
+ * @returns {{ttl: number, idle: number}}
+ */
+export function sessionLimits(env = {}) {
+  const pick = (name, fallback) => {
+    const raw = env[name];
+    if (raw === undefined || raw === null || raw === "") return fallback;
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) return n;
+    console.log(`[admin] ${name}=${JSON.stringify(raw)} is not a whole number of seconds > 0 - using ${fallback}`);
+    return fallback;
+  };
+  return { ttl: pick("ADMIN_SESSION_TTL_S", SESSION_TTL_S), idle: pick("ADMIN_SESSION_IDLE_S", SESSION_IDLE_S) };
+}
+
+const DEFAULT_LIMITS = { ttl: SESSION_TTL_S, idle: SESSION_IDLE_S };
 
 export const normaliseEmail = (s) => String(s ?? "").trim().toLowerCase();
 
@@ -193,7 +213,7 @@ export async function challengeStage({ db, challengeId, now = nowS() }) {
  *   {ok: true, stage: string, session: {token: string, email: string, maxAge: number}}
  * >}
  */
-export async function verifyCode({ db, users, challengeId, code, secondFactor = true, now = nowS() }) {
+export async function verifyCode({ db, users, challengeId, code, secondFactor = true, limits = DEFAULT_LIMITS, now = nowS() }) {
   if (!challengeId) return { ok: false, reason: "no-challenge" };
 
   // Count the attempt first, atomically: parallel guesses cannot share one.
@@ -252,18 +272,18 @@ export async function verifyCode({ db, users, challengeId, code, secondFactor = 
     }
   }
 
-  return { ok: true, stage: row.stage, session: await issueSession({ db, challengeId, email: row.email, now }) };
+  return { ok: true, stage: row.stage, session: await issueSession({ db, challengeId, email: row.email, limits, now }) };
 }
 
 /** Swap a passed challenge for a session. Only the token's hash is stored. */
-async function issueSession({ db, challengeId, email, now }) {
+async function issueSession({ db, challengeId, email, limits, now }) {
   const token = randomToken(32);
   await db.batch([
     db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId),
     db.prepare("INSERT INTO sessions (id_hash, email, created_at, expires_at, last_seen) VALUES (?, ?, ?, ?, ?)")
-      .bind(await sha256(token), email, now, now + SESSION_TTL_S, now),
+      .bind(await sha256(token), email, now, now + limits.ttl, now),
   ]);
-  return { token, email, maxAge: SESSION_TTL_S };
+  return { token, email, maxAge: limits.ttl };
 }
 
 /**
@@ -291,7 +311,7 @@ export async function resendNtfyCode({ db, users, challengeId, now = nowS() }) {
 }
 
 /** @returns {Promise<null | {email: string}>} */
-export async function getSession({ db, users, token, now = nowS() }) {
+export async function getSession({ db, users, token, limits = DEFAULT_LIMITS, now = nowS() }) {
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
   const idHash = await sha256(token);
   const row = await db.prepare(
@@ -299,7 +319,7 @@ export async function getSession({ db, users, token, now = nowS() }) {
   ).bind(idHash).first();
   if (!row) return null;
   // Expired, idle, or taken off the allowlist since signing in.
-  if (row.expiresAt < now || row.lastSeen + SESSION_IDLE_S < now || !users.has(row.email)) {
+  if (row.expiresAt < now || row.lastSeen + limits.idle < now || !users.has(row.email)) {
     await db.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(idHash).run();
     return null;
   }

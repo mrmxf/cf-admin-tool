@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fakeD1, AUTH_MIGRATIONS } from "./d1.js";
 import {
-  parseUsers, startLogin, verifyCode, resendNtfyCode, getSession, endSession, challengeStage, NTFY_RESENDS,
+  parseUsers, sessionLimits, startLogin, verifyCode, resendNtfyCode, getSession, endSession, challengeStage, NTFY_RESENDS,
   MAX_ATTEMPTS, CODE_TTL_S, NTFY_TTL_S, SESSION_IDLE_S, SESSION_TTL_S, SEND_LIMIT, SEND_WINDOW_S,
   SEND_DAILY_LIMIT, FAIL_DAILY_LIMIT, DAY_S,
 } from "../src/auth.js";
@@ -98,6 +98,32 @@ test("codes are sent at most SEND_LIMIT times per window per address", async () 
   for (let i = 0; i < SEND_LIMIT + 2; i++) sent.push((await startLogin({ ...env, email: "staff@example.org", now: T })).deliver);
   assert.equal(sent.filter(Boolean).length, SEND_LIMIT);
   assert.ok((await startLogin({ ...env, email: "staff@example.org", now: T + SEND_WINDOW_S })).deliver, "new window");
+});
+
+test("sessionLimits: env overrides, defaults for missing or bad values", () => {
+  assert.deepEqual(sessionLimits({}), { ttl: SESSION_TTL_S, idle: SESSION_IDLE_S });
+  assert.deepEqual(sessionLimits({ ADMIN_SESSION_TTL_S: "7200", ADMIN_SESSION_IDLE_S: 600 }), { ttl: 7200, idle: 600 });
+  for (const bad of ["", "0", "-5", "1.5", "1h", null]) {
+    assert.deepEqual(sessionLimits({ ADMIN_SESSION_TTL_S: bad, ADMIN_SESSION_IDLE_S: bad }), { ttl: SESSION_TTL_S, idle: SESSION_IDLE_S }, String(bad));
+  }
+});
+
+test("sessions: overridden limits set the cookie and the checks", async () => {
+  const env = setup();
+  const limits = { ttl: 1000, idle: 100 };
+  const signInWith = async () => {
+    const s = await startLogin({ ...env, email: "staff@example.org", now: T });
+    const e = await verifyCode({ ...env, challengeId: s.challengeId, code: s.deliver.code, now: T });
+    return (await verifyCode({ ...env, challengeId: s.challengeId, code: e.ntfy.code, limits, now: T })).session;
+  };
+  const session = await signInWith();
+  assert.equal(session.maxAge, 1000);
+  const token = session.token;
+  assert.ok(await getSession({ ...env, token, limits, now: T + 99 }));
+  assert.equal(await getSession({ ...env, token, limits, now: T + 99 + 101 }), null, "idle");
+  const token2 = (await signInWith()).token;
+  for (let t = T; t <= T + 1000; t += 90) assert.ok(await getSession({ ...env, token: token2, limits, now: t }));
+  assert.equal(await getSession({ ...env, token: token2, limits, now: T + 1001 }), null, "absolute");
 });
 
 test("sessions: idle timeout, absolute timeout, logout, removal from the list", async () => {

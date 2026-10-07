@@ -18,6 +18,10 @@
  *   GET/POST /<form>/<uid>/run/<wf>  a workflow's pages; its ONE event is appended
  *                                    to the workflow log (ADMIN_DB workflow_events)
  *
+ * Every record shown or given to a workflow is the ACTIVE record (src/patch.js):
+ * the submission with every logged patch applied. Which records a page lists is
+ * still decided in SQL on the submission (form, outcome, origin).
+ *
  * READ ONLY on FORM_DB (modules/forms.js select()), and every query is limited
  * to the origin the admin is being viewed on: a staging admin never shows
  * production data.
@@ -25,6 +29,8 @@
 
 import { formStats, listSubmissions, getSubmission } from "../modules/forms.js";
 import { withEvents, appendEvent, checkEvent } from "../modules/events.js";
+import { cspWithScripts } from "../csp.js";
+import { html, raw } from "../html.js";
 import { dbPing, formHealth } from "../modules/health.js";
 import { normaliseWorkflows, workflowsFor } from "../workflows.js";
 import { normaliseViews } from "../views.js";
@@ -67,8 +73,13 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
     if (!wf) return admin.notFound();
     const view = vs.find((v) => v.form === form.id);
     const back = view ? `${admin.base}/views/${view.id}` : `${admin.base}/${form.id}/${uid}`;
-    const wfPage = (data, status = 200) =>
-      admin.page(`Workflow: ${wf.label}`, t.workflowPage(c, { workflow: wf, back, ...data }), { status });
+    const wfPage = async (data, status = 200, scripts = []) => {
+      const page = t.workflowPage(c, { workflow: wf, back, ...data });
+      if (!scripts.length) return admin.page(`Workflow: ${wf.label}`, page, { status });
+      if (scripts.some((s) => typeof s !== "string" || /<\/script/i.test(s))) throw new Error("scripts must be strings without </script");
+      return admin.page(`Workflow: ${wf.label}`, html`${page}${scripts.map((s) => raw(`<script>${s}</script>`))}`,
+        { status, headers: { "content-security-policy": await cspWithScripts(scripts) } });
+    };
     if (!wf.implemented) return wfPage({ text: "This workflow is not implemented yet." }, 409);
     const GET = request.method === "GET" || request.method === "HEAD";
     try {
@@ -90,11 +101,11 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
         await appendEvent(env.ADMIN_DB, { origin: url.origin, form: form.id, uid: record.id, actor: user.email, event: r.event })
           .catch((err) => { throw new Error(`event NOT logged ${JSON.stringify(r.event)} for ${record.id}: ${err.message}`); });
         console.log(`[admin] ${user.email} ${r.event.event} ${r.event.status} on ${form.id}/${record.id}`);
-        if (r.body) return wfPage({ body: r.body }, r.status ?? 200);
+        if (r.body) return await wfPage({ body: r.body }, r.status ?? 200, r.scripts);
         return admin.redirect(back);
       }
       if (r?.back) return admin.redirect(back);
-      if (r?.body) return wfPage({ body: r.body }, r.status ?? 200);
+      if (r?.body) return await wfPage({ body: r.body }, r.status ?? 200, r.scripts);
       throw new Error("run() returned no body, back or event");
     } catch (err) {
       console.log(`[admin] workflow ${wf.id} failed: ${err.stack || err.message}`);
@@ -134,6 +145,7 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
           const outcome = url.searchParams.get("outcome") || "all";
           const page = await listing(env, { formId: form.id, origin: url.origin, outcome, cursor: url.searchParams.get("cursor") });
           if (!page) return null;
+          await withEvents(env.ADMIN_DB, { origin: url.origin, form: form.id, records: page.records });
           const stats = await formStats(env.FORM_DB, form.id, url.origin);
           return admin.page(form.label, t.formsList(c, { form, stats, outcome, ...page }));
         }

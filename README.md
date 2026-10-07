@@ -127,7 +127,8 @@ name, like the core's. A throw from `fetch()` is logged and becomes a generic
    no push is sent and `ntfyTopic` is optional. Every line of the second factor
    sits inside an `if (secondFactor) {}` block (auth.js `verifyCode`,
    handler.js), so a different channel replaces only those.
-4. A session: 8 hours at most, 1 hour idle. `__Host-` cookies, HttpOnly, Secure,
+4. A session: 18 hours at most, 3 hours idle (vars `ADMIN_SESSION_TTL_S`,
+   `ADMIN_SESSION_IDLE_S` override). `__Host-` cookies, HttpOnly, Secure,
    SameSite=Strict. Taking someone off `ADMIN_USERS` ends their session at the
    next request.
 
@@ -202,6 +203,8 @@ except on localhost.
 | `NTFY_TOKEN` | secret | optional |
 | `DRY_RUN` | var | `"true"`: codes and workflow emails printed to the console, **localhost only** |
 | `ADMIN_ROOT` | var | optional override of `root` |
+| `ADMIN_SESSION_TTL_S` | var | optional: a session's absolute limit in seconds, default `64800` (18 h) |
+| `ADMIN_SESSION_IDLE_S` | var | optional: its idle limit in seconds, default `10800` (3 h) |
 | `FORM_DB` | D1 | formsPlugin: the cf-form-mailer log, **read only** |
 | any `list[].service` | service binding | formsPlugin: reaches that form's `/health` |
 
@@ -266,6 +269,41 @@ read-only here. A malformed event is refused and nothing is logged.
 
 A workflow is `{ id, label, description, forms, run }`; the contract for `run`
 is at the top of `src/workflows.js`. Without `run` it is a disabled button.
+
+A page a workflow returns may carry `scripts`: JavaScript sources inlined after
+the body and allowed by their sha256 in **that page's** CSP only. Every other
+admin page keeps a CSP that runs no script of ours. (A `<script src>` from the
+admin cannot work: Fetch Metadata refuses every subresource request.)
+
+### Submission and active: editing a record
+
+The **submission** is what arrived, and it is immutable: `FORM_DB` is never
+written. An event may carry a **`patch`**, an RFC 7396 JSON Merge Patch over the
+record, stored in `workflow_events.patch`. Every reader - the views, the
+listings, the record page and every workflow's `run` - gets the **active**
+record: the submission with every patch applied, in append order.
+
+```json
+{ "event": "wf04-edit", "status": 200, "statusMessage": "⚠️ edited",
+  "details": "why: the reason the admin typed",
+  "patch": { "answers": { "vehicle_reg": "XY34 ZZZ" } }, "...": "..." }
+```
+
+- `record.submission` is the original, deep-frozen; `record.edited` lists the
+  changed paths (`answers.vehicle_reg`). A view marks an edited cell ✏️ with the
+  submitted value in its title; the record page shows each edited answer's
+  submitted value, both records as JSON, and in History each patch's
+  path: old → new, who and why.
+- **Fixed fields** are never patched: `id` (every patch is keyed on it),
+  `workflow` (the log), `submission`, `edited`. `checkEvent` refuses a patch that
+  names one, is empty, uses `__proto__`/`constructor`/`prototype` as a key, or is
+  over 32 KB.
+- `null` in a merge patch removes a key, so no value can be *set* to null.
+- **Which** records a page lists is decided in SQL on the submission (form,
+  outcome, origin). An edited `url` cannot move a record to another origin.
+- The patch helpers are exported for editing workflows: `mergePatch`,
+  `diffPatch` (the patch from one record to another), `changes`, `editable` (a
+  record without its fixed fields), `checkPatch`.
 
 #### approvalWorkflow
 
