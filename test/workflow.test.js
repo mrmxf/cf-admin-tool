@@ -161,7 +161,7 @@ test("approve: the submission, then the filled template and its preview, then se
 
   const after = await (await call("/admin/forms/views/parking", { cookie: auth })).text();
   assert.match(after, /#wf-wf02">✅ with mail<\/a>/, "the table shows the latest event");
-  assert.match(after, /<td class="eye"><span class="badge" role="img" aria-label="Parking approval: ✅ with mail" title="Parking approval: ✅ with mail">✅<\/span><button/,
+  assert.match(after, /<td class="eye"><span class="badge" role="img" aria-label="Parking approval: ✅ with mail" title="Parking approval: ✅ with mail"><small>✅<\/small><\/span><button/,
     "approvalWorkflow's default badge, beside the eye");
 });
 

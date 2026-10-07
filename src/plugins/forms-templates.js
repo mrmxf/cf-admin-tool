@@ -67,7 +67,7 @@ export const FORMS_TEMPLATES = {
       if (!badges) return "";
       const b = rowBadge(r, workflows);
       // An empty slot when there is none, so the eyes stay in one column.
-      return b ? html`<span class="badge" role="img" aria-label="${b.title}" title="${b.title}">${b.emoji}</span>` : html`<span class="badge"></span>`;
+      return b ? html`<span class="badge" role="img" aria-label="${b.title}" title="${b.title}"><small>${b.emoji}</small></span>` : html`<span class="badge"></span>`;
     };
     const td = (col, r) => {
       if (col.workflow) return html`<td class="w">${workflowCell(ctx, { form, record: r, workflow: wf(col) })}</td>`;
