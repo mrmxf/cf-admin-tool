@@ -2,7 +2,9 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { fakeD1, AUTH_MIGRATIONS, EVENTS_MIGRATIONS } from "./d1.js";
 import { createAdmin, formsPlugin, html } from "../index.js";
-import { normaliseViews, workflowEvent, eventText, cell } from "../src/views.js";
+import { normaliseViews, workflowEvent, eventText, cell, rowBadge, ERROR_BADGE } from "../src/views.js";
+import { normaliseWorkflows } from "../src/workflows.js";
+import { approvalWorkflow } from "../src/approval.js";
 import { dateFormatters } from "../src/dates.js";
 
 const SCHEMA = new URL("fixtures/submissions.sql", import.meta.url).pathname;
@@ -157,7 +159,7 @@ test("a view is one compact row per sent submission, escaped; narrow classes; wo
   assert.match(view, /<main class="wrap wide">/, "a data page is full width");
   assert.doesNotMatch(view, /Health/);
   assert.match(view, /<table class="compact">/);
-  assert.match(view, /<th scope="col">Submitted<\/th><th scope="col" class="fill">Reg<\/th><th scope="col" class="n">Car<\/th><th scope="col" class="w">Approval<\/th>/);
+  assert.match(view, /<th scope="col"><span class="d-full">Submitted<\/span><span class="d-short">Date<\/span><\/th><th scope="col" class="fill">Reg<\/th><th scope="col" class="n">Car<\/th><th scope="col" class="w">Approval<\/th>/);
   assert.match(view, /<span class="d-full">2026-10-01 @ 11:00<\/span><span class="d-short">2026-10-01<\/span>/);
   assert.match(view, /<span class="n-full">Ford \(Focus\)<\/span><span class="n-short">Ford \(…<\/span>/, "clipped to 6 on narrow");
   assert.match(view, /<td class="n"><span class="n-full">Kia \(Rio\)/, "9 characters: clipped too");
@@ -223,4 +225,32 @@ test("a workflow's pages: GET starts it, its event is checked and appended, then
   assert.equal((await call(`${base}/wf09`, { cookie: auth })).status, 404, "not offered on parking");
   assert.equal((await call("/admin/forms/parking/55555555-5555-4555-8555-555555555555/run/wf03", { cookie: auth })).status, 404);
   assert.equal((await call(`${base}/wf03`, { method: "POST" })).status, 403, "signed out");
+});
+
+// ── badges ──────────────────────────────────────────────────────────────────
+
+test("rowBadge: the highest-ranked badge wins; a latest 5xx of any workflow shows ‼️", () => {
+  const wfs = normaliseWorkflows([
+    approvalWorkflow({ id: "wf02", label: "Approval", templates: { approve: { subject: "", body: "" }, deny: { subject: "", body: "" } } }),
+    { id: "wf03", label: "Permit", badge: { 201: "🅿️" }, badgeRank: 2 },
+    { id: "wf05", label: "Edit" },
+  ]);
+  const ev = (event, status, statusMessage = "m") => ({ event, status, statusMessage });
+  const rec = (...events) => ({ workflow: { events } });
+  assert.equal(rowBadge(rec(), wfs), null, "nothing run");
+  assert.deepEqual(rowBadge(rec(ev("wf02-approve", 201, "✅ with mail")), wfs), { emoji: "✅", title: "Approval: ✅ with mail" });
+  assert.equal(rowBadge(rec(ev("wf02-deny", 422)), wfs).emoji, "❌");
+  assert.equal(rowBadge(rec(ev("wf02-deny", 422), ev("wf02-approve", 202)), wfs).emoji, "✅", "the latest event of a workflow counts");
+  assert.equal(rowBadge(rec(ev("wf03", 201), ev("wf02-deny", 400)), wfs).emoji, "🅿️", "rank, not order");
+  assert.equal(rowBadge(rec(ev("wf02-approve", 201), ev("wf05", 200)), wfs).emoji, "✅", "a workflow with no badge is ignored");
+  assert.deepEqual(rowBadge(rec(ev("wf03", 201), ev("wf02-approve", 500, "☠️ failed")), wfs), { emoji: ERROR_BADGE, title: "Approval: ☠️ failed" });
+  assert.equal(rowBadge(rec(ev("wf02-approve", 500), ev("wf02-approve", 201)), wfs).emoji, "✅", "a later success clears it");
+});
+
+test("a workflow's badge is checked", () => {
+  for (const badge of [null, [], {}, { 201: "" }, { ok: "✅" }, { 201: 5 }, { 600: "x" }]) {
+    assert.throws(() => normaliseWorkflows([{ id: "wf09", badge }]), /badge must map/, JSON.stringify(badge));
+  }
+  assert.throws(() => normaliseWorkflows([{ id: "wf09", badge: { 201: "✅" }, badgeRank: "high" }]), /badgeRank/);
+  assert.deepEqual(normaliseWorkflows([{ id: "wf09", badge: { "201": " ✅ " } }])[0].badge, { 201: "✅" });
 });

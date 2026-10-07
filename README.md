@@ -237,11 +237,13 @@ first; each further column is ONE of `answer` (a field name), `value`
 (`(record) => string`) or `workflow` (a workflow id offered on that form). An
 empty cell is blank.
 
-**Narrow screens** (under 50rem) show the date without the time, the columns
+**Narrow screens** (under 50rem) show the date without the time (headed
+"Date", not "Submitted"), the columns
 marked `narrow`, and an eye button. `narrow: 30` clips to 30 characters and an
 ellipsis; `narrow: "fill"` (one per view) takes the remaining width. The eye
 opens the whole row, transposed, as the wide table shows it - a `popover`, so no
-script: the CSP allows none of ours.
+script: the CSP allows none of ours. Beside it, the row's **badge** (below,
+Workflows), when the form's workflows declare any.
 
 A `workflow` cell is the workflow's latest event, its `statusMessage` linked to
 the workflow on the submission page; before it has run, a button named after the
@@ -267,8 +269,23 @@ workflow: a record's own `workflow.events` (cf-form-mailer's "submit") followed
 by the logged ones. It is in `ADMIN_DB` because `FORM_DB` is the engine's and
 read-only here. A malformed event is refused and nothing is logged.
 
-A workflow is `{ id, label, description, forms, run }`; the contract for `run`
-is at the top of `src/workflows.js`. Without `run` it is a disabled button.
+A workflow is `{ id, label, description, forms, run, badge, badgeRank }`; the
+contract for `run` is at the top of `src/workflows.js`. Without `run` it is a
+disabled button.
+
+**Badges** give a view's narrow-screen row one emoji. `badge` maps the status of
+the workflow's latest event to it, read from the log like everything else:
+
+```js
+{ id: "wf03", label: "Permit", badge: { 201: "🅿️" }, badgeRank: 2 }
+```
+
+Of the workflows whose latest event has a badge, the highest `badgeRank`
+(default 0) wins. Whatever the ranks, if the row's most recent event of all is a
+5xx, it shows `‼️` (`ERROR_BADGE`) until a later event replaces it.
+`approvalWorkflow` defaults to `✅` approved (201, 202) and `❌` denied (400,
+422), rank 0; pass `badge` / `badgeRank` to change them. The emoji has the
+workflow's label and `statusMessage` as its title and accessible name.
 
 A page a workflow returns may carry `scripts`: JavaScript sources inlined after
 the body and allowed by their sha256 in **that page's** CSP only. Every other
@@ -309,7 +326,7 @@ record: the submission with every patch applied, in append order.
 
 ```js
 approvalWorkflow({ id: "wf02", label: "Approval", forms: ["requests"],
-  emailField: "email", replyToVar: "REQUESTS_RECIPIENT",
+  emailField: "email", replyToVar: "REQUESTS_RECIPIENT", ccVar: "REQUESTS_RECIPIENT",
   templates: { approve: { subject, body }, deny: { subject, body } } })
 ```
 
@@ -317,8 +334,12 @@ approvalWorkflow({ id: "wf02", label: "Approval", forms: ["requests"],
 2. "Send response to submitter": the Markdown template, `{{field}}` already
    filled from the answers (plus `{{site_name}}`, `{{site_url}}`,
    `{{submitted_date}}`), editable, with a light-mode preview of the email.
+   With `ccVar` set (an env var holding one address), a **cc: <address>**
+   checkbox above the buttons, ticked to start; a send with it ticked has
+   `details` "cc: <address>".
    **Send** / **Don't send** / **Update preview** (shows the edits; nothing
-   logged) / **Back** (to step 1; nothing logged).
+   logged; disabled until the text is edited, by a script allowed by its hash)
+   / **Back** (to step 1; nothing logged).
 3. The event: `201 "✅ with mail"`, `202 "✅ silent"`, `400 "❌ with mail"`,
    `422 "❌ silent"`. A send that fails logs `500 "☠️ failed"` with the reason in
    `details`, and shows step 2 again to retry or not send. The submission page

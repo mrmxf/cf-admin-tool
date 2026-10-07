@@ -8,6 +8,13 @@
  * `forms` limits which forms offer it (omit for every form). A workflow with no
  * `run` is a placeholder: its button is shown, disabled.
  *
+ * BADGES, optional: `badge` maps the status of the workflow's latest event to one
+ * emoji, shown by a view's eye button on narrow screens, e.g.
+ *   badge: { 201: "✅", 202: "✅", 400: "❌", 422: "❌" }, badgeRank: 1
+ * Of the workflows whose latest event has a badge, the highest `badgeRank`
+ * (default 0) wins. Whatever the ranks, a row whose most recent event of ALL is a
+ * 5xx shows ERROR_BADGE (views.js).
+ *
  * THE RULE: a workflow changes nothing. The only thing it can produce is ONE
  * event, which the tool checks (modules/events.js checkEvent) and appends to the
  * append-only workflow log; readers take the latest event per workflow. Sending
@@ -40,6 +47,17 @@
 
 const ID = /^[a-z0-9-]{1,40}$/;
 
+function checkBadge(w) {
+  if (w.badge === undefined) return null;
+  const entries = Object.entries(w.badge ?? {});
+  if (w.badge === null || typeof w.badge !== "object" || Array.isArray(w.badge) || !entries.length
+      || entries.some(([k, v]) => !/^[1-5]\d\d$/.test(k) || typeof v !== "string" || !v.trim() || v.length > 16)) {
+    throw new Error(`workflow "${w.id}": badge must map HTTP status codes to a short string, e.g. { 201: "✅" }`);
+  }
+  if (w.badgeRank !== undefined && !Number.isFinite(w.badgeRank)) throw new Error(`workflow "${w.id}": badgeRank must be a number`);
+  return Object.fromEntries(entries.map(([k, v]) => [Number(k), v.trim()]));
+}
+
 export function normaliseWorkflows(list = []) {
   const seen = new Set();
   return list.map((w) => {
@@ -52,6 +70,8 @@ export function normaliseWorkflows(list = []) {
       description: w.description || "",
       forms: Array.isArray(w.forms) ? w.forms : null,
       implemented: typeof w.run === "function",
+      badge: checkBadge(w),
+      badgeRank: w.badgeRank ?? 0,
       run: w.run,
     };
   });

@@ -145,6 +145,8 @@ const styles = (site) => `
   button.eye-btn { margin: 0; padding: .25rem .4rem; background: none; color: var(--link); border-radius: 4px; line-height: 0; }
   button.eye-btn:hover { background: var(--surface); }
   button.eye-btn svg { width: 1.35rem; height: 1.35rem; }
+  .compact td.eye { white-space: nowrap; }
+  .badge { display: inline-block; width: 1.6em; text-align: center; vertical-align: middle; font-size: 1.1rem; line-height: 1; }
   .viewer { background: var(--bg); color: var(--body); border: 1px solid var(--border); border-radius: 6px;
     padding: 1rem 1.25rem; width: min(40rem, calc(100vw - 2rem)); max-height: 85vh; overflow: auto; }
   .viewer::backdrop { background: oklch(0% 0 0 / .6); }

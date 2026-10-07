@@ -6,7 +6,7 @@
  */
 
 import { html, raw } from "../html.js";
-import { cell, clip, workflowEvent, eventText } from "../views.js";
+import { cell, clip, workflowEvent, eventText, rowBadge } from "../views.js";
 
 const EYE = raw(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
   stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/>
@@ -55,12 +55,20 @@ export const FORMS_TEMPLATES = {
   /**
    * One of config.views: one compact row per submission, the full page width.
    * Narrow screens keep the date, the `narrow` columns and an eye button, which
-   * opens the whole row (a popover: no script, the CSP allows none of ours).
+   * opens the whole row (a popover: no script, the CSP allows none of ours),
+   * with the row's workflow badge beside it (views.js rowBadge).
    * data: {view, form, workflows, records, next}
    */
   dashboardView: (ctx, { view, form, workflows, records, next }) => {
     const at = (r) => `${ctx.base}/${form.id}/${r.id}`;
     const wf = (col) => workflows.find((w) => w.id === col.workflow);
+    const badges = workflows.some((w) => w.badge);
+    const badge = (r) => {
+      if (!badges) return "";
+      const b = rowBadge(r, workflows);
+      // An empty slot when there is none, so the eyes stay in one column.
+      return b ? html`<span class="badge" role="img" aria-label="${b.title}" title="${b.title}">${b.emoji}</span>` : html`<span class="badge"></span>`;
+    };
     const td = (col, r) => {
       if (col.workflow) return html`<td class="w">${workflowCell(ctx, { form, record: r, workflow: wf(col) })}</td>`;
       const text = cell(col, r);
@@ -77,11 +85,11 @@ export const FORMS_TEMPLATES = {
       ${view.outcome} only`}. <a href="${ctx.base}/${form.id}">Every entry</a></p>
     ${records.length === 0 ? html`<p class="meta">Nothing to show.</p>` : html`
     <div class="scroll"><table class="compact">
-      <thead><tr><th scope="col">Submitted</th>${view.columns.map((col) => html`<th scope="col" class="${colClass(col)}">${col.label}</th>`)}<th scope="col" class="eye"><span class="sr">View</span></th></tr></thead>
+      <thead><tr><th scope="col"><span class="d-full">Submitted</span><span class="d-short">Date</span></th>${view.columns.map((col) => html`<th scope="col" class="${colClass(col)}">${col.label}</th>`)}<th scope="col" class="eye"><span class="sr">View</span></th></tr></thead>
       <tbody>${records.map((r) => html`<tr>
         <td><a href="${at(r)}"><span class="d-full">${ctx.fmtDateTime(r.timestamp)}</span><span class="d-short">${ctx.fmtDate(r.timestamp)}</span></a></td>
         ${view.columns.map((col) => td(col, r))}
-        <td class="eye"><button type="button" class="eye-btn" popovertarget="rec-${r.id}" aria-label="View the submission of ${ctx.fmtDateTime(r.timestamp)}">${EYE}</button></td>
+        <td class="eye">${badge(r)}<button type="button" class="eye-btn" popovertarget="rec-${r.id}" aria-label="View the submission of ${ctx.fmtDateTime(r.timestamp)}">${EYE}</button></td>
       </tr>`)}</tbody>
     </table></div>
     ${records.map((r) => html`<div id="rec-${r.id}" class="viewer" popover>
@@ -135,8 +143,8 @@ export const FORMS_TEMPLATES = {
       </div>
     </form>`,
 
-  /** approvalWorkflow, page 2. data: {action, decision, started, to, subject, markdown, preview, error} */
-  approvalRespond: (ctx, { action, decision, started, to, subject, markdown, preview, error = "" }) => html`
+  /** approvalWorkflow, page 2. data: {action, decision, started, to, subject, markdown, preview, cc: null | {address, checked}, error} */
+  approvalRespond: (ctx, { action, decision, started, to, subject, markdown, preview, cc = null, error = "" }) => html`
     <h2>Send response to submitter</h2>
     ${error ? html`<p class="error" role="alert">${error}</p>` : ""}
     <dl class="pairs">
@@ -148,11 +156,12 @@ export const FORMS_TEMPLATES = {
       <input type="hidden" name="step" value="respond">
       <input type="hidden" name="decision" value="${decision}">
       <input type="hidden" name="started" value="${started}">
-      <label for="markdown">Message (Markdown)</label>
+      <label for="markdown">Message (you can customise this markdown)</label>
       <textarea id="markdown" name="markdown" rows="14">${markdown}</textarea>
       <h3>Preview</h3>
       <p class="meta">The email in light mode. "Update preview" shows your edits; Send sends the text as typed.</p>
       <div class="mail-preview">${raw(preview)}</div>
+      ${cc ? html`<p><label><input type="checkbox" name="cc" value="1"${cc.checked ? raw(" checked") : ""}> cc: ${cc.address}</label></p>` : ""}
       <div class="actions">
         <button type="submit" name="action" value="send">Send</button>
         <button type="submit" name="action" value="skip" class="secondary">Don't send</button>

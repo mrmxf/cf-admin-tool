@@ -1,6 +1,6 @@
 {
   "name": "@mrmxf/cf-admin-tool",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Cloudflare Worker admin area: allowlisted email (+ optional push) sign-in, a dashboard, and a router for Worker-shaped plugins - with a read-only browser over the cf-form-mailer submission log",
   "license": "BSD-3-Clause",
   "author": "Mr MXF <info@mrmxf.com>",

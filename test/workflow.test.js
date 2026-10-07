@@ -2,7 +2,9 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { fakeD1, AUTH_MIGRATIONS, EVENTS_MIGRATIONS } from "./d1.js";
 import { createAdmin, formsPlugin } from "../index.js";
-import { approvalWorkflow } from "../src/approval.js";
+import { approvalWorkflow, PREVIEW_SCRIPT } from "../src/approval.js";
+import { sendMail } from "../src/deliver.js";
+import { scriptHash } from "../src/csp.js";
 import { renderMarkdown, fill } from "../src/markdown.js";
 import { checkEvent } from "../src/modules/events.js";
 
@@ -54,7 +56,7 @@ const admin = createAdmin({
   requireSecondFactor: false,
   plugins: [formsPlugin({ toRecord, list: [{ id: "parking", label: "Parking", path: "/forms/parking" }],
   workflows: [approvalWorkflow({
-    id: "wf02", label: "Parking approval", forms: ["parking"], replyToVar: "PARKING_RECIPIENT",
+    id: "wf02", label: "Parking approval", forms: ["parking"], replyToVar: "PARKING_RECIPIENT", ccVar: "PARKING_RECIPIENT",
     templates: {
       approve: { subject: "Approved: {{reg}}", body: "Dear {{name}},\n\nYour car **{{reg}}** is approved for {{site_name}}." },
       deny: { subject: "Sorry: {{reg}}", body: "Dear {{name}}, no." },
@@ -159,6 +161,45 @@ test("approve: the submission, then the filled template and its preview, then se
 
   const after = await (await call("/admin/forms/views/parking", { cookie: auth })).text();
   assert.match(after, /#wf-wf02">✅ with mail<\/a>/, "the table shows the latest event");
+  assert.match(after, /<td class="eye"><span class="badge" role="img" aria-label="Parking approval: ✅ with mail" title="Parking approval: ✅ with mail">✅<\/span><button/,
+    "approvalWorkflow's default badge, beside the eye");
+});
+
+test("page 2: the cc box (ticked to start, then as sent), and the Update-preview script by hash", async () => {
+  const auth = await signIn();
+  const started = new Date().toISOString();
+  let res = await call(RUN, { method: "POST", cookie: auth, form: { step: "decide", decision: "approve", started } });
+  const page = await res.text();
+  assert.match(page, /<label for="markdown">Message \(you can customise this markdown\)<\/label>/);
+  assert.match(page, /<input type="checkbox" name="cc" value="1" checked> cc: parking@site\.example<\/label>[\s\S]*value="send">Send/,
+    "ticked to start, above the buttons");
+  assert.ok(page.includes(`<script>${PREVIEW_SCRIPT}</script>`), "the script is inlined");
+  assert.ok(res.headers.get("content-security-policy").includes(await scriptHash(PREVIEW_SCRIPT)), "and allowed by its hash");
+
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "preview", markdown: "x" } });
+  assert.match(await res.text(), /<input type="checkbox" name="cc" value="1"> cc:/, "unticked stays unticked across a preview");
+
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "send", markdown: "x", cc: "1" } });
+  assert.equal(res.status, 303);
+  assert.match(logs.findLast((l) => l.includes("DRY RUN workflow email")), /\nCc: parking@site\.example\n/);
+  assert.equal(events().at(-1).details, "cc: parking@site.example", "the cc is on the record");
+
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "send", markdown: "y" } });
+  assert.match(logs.findLast((l) => l.includes("DRY RUN workflow email")), /\nCc: \n/, "unticked: no cc");
+  assert.equal(events().at(-1).details, "");
+});
+
+test("sendMail: a cc that does not look right is dropped", async () => {
+  const sent = [];
+  globalThis.fetch = async (u, init) => { sent.push(JSON.parse(init.body)); return new Response("{}"); };
+  const base = { env: { MAILTRAP_API_TOKEN: "t" }, request: new Request("https://site.example/"), from: "a@site.example",
+    to: "jo@example.org", subject: "s", text: "t", html: "h" };
+  await sendMail({ ...base, cc: "ok@site.example" });
+  await sendMail({ ...base, cc: "bad\r\nBcc: x@evil.example" });
+  assert.deepEqual(sent.map((p) => p.cc), [[{ email: "ok@site.example" }], undefined]);
 });
 
 test("the four outcomes, Back, and a failed send logged as 500 with its details", async () => {

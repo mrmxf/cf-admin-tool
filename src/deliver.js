@@ -119,14 +119,14 @@ const EMAIL = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
  * One email for a workflow (a response to a submitter), AWAITED and FAIL
  * CLOSED: the caller logs "with mail" only on {ok: true}. `to` came from a
  * form, so it is checked for shape and stripped of line breaks like everything
- * else that reaches a header.
+ * else that reaches a header. `cc` (optional) is one address, from a var.
  *
  * DRY RUN: printed in full on localhost and reported as sent; on any other host
  * nothing is printed and it reports NOT sent.
  *
  * @returns {Promise<{ok: true, dryRun?: true} | {ok: false, reason: string}>}
  */
-export async function sendMail({ env, request, from, fromName, to, replyTo, subject, text, html, category }) {
+export async function sendMail({ env, request, from, fromName, to, cc = "", replyTo, subject, text, html, category }) {
   to = headerSafe(to);
   if (!EMAIL.test(to)) return { ok: false, reason: "the submitter's email address does not look right" };
   const payload = {
@@ -137,6 +137,8 @@ export async function sendMail({ env, request, from, fromName, to, replyTo, subj
     html,
     category: headerSafe(category || "admin-workflow"),
   };
+  // cc is ours (a var), not the public's; one that does not look right is dropped, not sent.
+  if (cc && EMAIL.test(headerSafe(cc))) payload.cc = [{ email: headerSafe(cc) }];
   if (replyTo && EMAIL.test(headerSafe(replyTo))) payload.headers = { "Reply-To": headerSafe(replyTo) };
   if (env.DRY_RUN === "true") {
     if (!isLocalDev(request, env)) {
@@ -144,7 +146,7 @@ export async function sendMail({ env, request, from, fromName, to, replyTo, subj
       return { ok: false, reason: "dry run on a non-local host" };
     }
     console.log(`[admin] DRY RUN workflow email\nTo: ${to}\nFrom: ${payload.from.name} <${payload.from.email}>\n` +
-      `Reply-To: ${payload.headers?.["Reply-To"] ?? ""}\nSubject: ${payload.subject}\n\n${text}\n`);
+      `Cc: ${payload.cc?.[0].email ?? ""}\nReply-To: ${payload.headers?.["Reply-To"] ?? ""}\nSubject: ${payload.subject}\n\n${text}\n`);
     return { ok: true, dryRun: true };
   }
   if (!env.MAILTRAP_API_TOKEN || !payload.from.email) return { ok: false, reason: "mail is not configured" };

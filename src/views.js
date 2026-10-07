@@ -22,10 +22,11 @@
  *             workflow has a run()) - see workflowEvent below
  * An empty cell is blank.
  *
- * NARROW SCREENS show the date (no time), the columns marked `narrow`, and an
+ * NARROW SCREENS show the date (no time, headed "Date"), the columns marked `narrow`, and an
  * eye button that opens the whole row. `narrow: 30` shows the first 30
  * characters and an ellipsis; `narrow: "fill"` (one per view) takes the rest of
- * the width. Unmarked columns are wide-screen only.
+ * the width. Unmarked columns are wide-screen only. Beside the eye, the row's
+ * badge (rowBadge, below) if its workflows declare any.
  */
 
 import { isEventOf } from "./modules/events.js";
@@ -68,6 +69,29 @@ export function normaliseViews(list = [], { forms, workflows }) {
  */
 export function workflowEvent(record, workflowId) {
   return (record.workflow?.events ?? []).filter((x) => isEventOf(x?.event, workflowId)).at(-1) ?? null;
+}
+
+export const ERROR_BADGE = "‼️";
+
+/**
+ * A row's one-emoji summary for narrow screens, or null: ERROR_BADGE if the most
+ * recent event of all is a 5xx, else the badge of the highest-ranked workflow
+ * whose latest event has one. `title` says where it came from.
+ */
+export function rowBadge(record, workflows) {
+  const last = (record.workflow?.events ?? []).at(-1);
+  if (last && last.status >= 500) {
+    const w = workflows.find((x) => isEventOf(last.event, x.id));
+    return { emoji: ERROR_BADGE, title: `${w?.label ?? last.event}: ${eventText(last)}` };
+  }
+  let best = null;
+  for (const w of workflows) {
+    if (!w.badge) continue;
+    const e = workflowEvent(record, w.id);
+    const emoji = e && w.badge[e.status];
+    if (emoji && (!best || w.badgeRank > best.rank)) best = { emoji, rank: w.badgeRank, title: `${w.label}: ${eventText(e)}` };
+  }
+  return best && { emoji: best.emoji, title: best.title };
 }
 
 /** What a view shows for a workflow's event: its statusMessage, else its status. */
