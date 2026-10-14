@@ -93,3 +93,19 @@ export async function getSubmission(db, { formId, origin, uid, toRecord }) {
     formId, uid, originPattern(origin)).first();
   return row ? toRecord(row) : null;
 }
+
+/**
+ * Every matching submission, newest first, up to `max` (default 2000): pages of
+ * listSubmissions joined. For a page that must see them all at once, e.g. a
+ * list to sort; `truncated` says the cap was hit.
+ */
+export async function allSubmissions(db, { formId, origin, outcome = "all", toRecord, max = 2000 }) {
+  const records = [];
+  let cursor;
+  do {
+    const page = await listSubmissions(db, { formId, origin, outcome, cursor, toRecord });
+    records.push(...page.records);
+    cursor = page.next;
+  } while (cursor && records.length < max);
+  return { records: records.slice(0, max), truncated: Boolean(cursor) || records.length > max };
+}

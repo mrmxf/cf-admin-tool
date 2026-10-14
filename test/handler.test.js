@@ -88,14 +88,16 @@ test("the whole login, then the forms pages", async () => {
   assert.equal(res.status, 200);
   const dash = await res.text();
   assert.doesNotMatch(dash, /Workflows/, "no workflows card");
-  assert.match(dash, /Health/);
+  assert.match(dash, /<div class="tile warn" id="tile-admin-health">\s*<h3><a href="\/admin\/checks">Health<\/a><\/h3>/, "health is a tile; unbound form Workers are unknown, so warn");
+  assert.match(dash, /✅ 4 checks pass<\/p>\s*<p>❓ 3 unknown/);
+  assert.doesNotMatch(dash, /<table>/, "the dashboard is tiles only");
   assert.equal(res.headers.get("cache-control"), "no-store");
   assert.match(res.headers.get("content-security-policy"), /frame-ancestors 'none'/);
 
   res = await call("/admin/forms", { cookie: auth });
   const idx = await res.text();
-  assert.match(idx, /<p class="count">1 sent of 1 submitted<\/p>/);
-  assert.match(idx, /<em>newest<\/em>: 2026-10-01 @ 10:00/, "no timeZone: UTC");
+  assert.match(idx, /<p>1 sent of 1 submitted<\/p>/);
+  assert.match(idx, /<p>newest: 2026-10-01 @ 10:00<\/p>/, "no timeZone: UTC");
 
   res = await call("/admin/forms/parking", { cookie: auth });
   const list = await res.text();

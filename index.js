@@ -8,7 +8,8 @@
  *   import { createAdmin, formsPlugin } from "@mrmxf/cf-admin-tool";
  *
  * `html` and `raw` are for templates and plugins; the patch helpers are for
- * workflows that edit a record (src/patch.js); the rest is exported for tests.
+ * workflows that edit a record (src/patch.js); the readers, settings and CSP
+ * helpers are for a consumer's own plugins; the rest is exported for tests.
  */
 export { createAdmin, normaliseRoot, normalisePlugins } from "./src/handler.js";
 export { formsPlugin } from "./src/plugins/forms.js";
@@ -20,4 +21,11 @@ export { approvalWorkflow } from "./src/approval.js";
 export { renderMarkdown, fill } from "./src/markdown.js";
 export { dateFormatters } from "./src/dates.js";
 export { FIXED, mergePatch, diffPatch, changes, editable, checkPatch, isObject } from "./src/patch.js";
-export { scriptHash } from "./src/csp.js";
+export { scriptHash, cspWithScripts } from "./src/csp.js";
+// For a consumer's own plugins. Reads only, plus settings (append-only);
+// workflow events are still written by formsPlugin alone.
+export { listSubmissions, allSubmissions } from "./src/modules/forms.js";
+export { withEvents, latestEvents, isEventOf } from "./src/modules/events.js";
+export { readSetting, settingHistory, appendSetting } from "./src/modules/settings.js";
+export { workflowEvent, eventText } from "./src/views.js";
+export { sortTiles, sortKey } from "./src/tiles.js";

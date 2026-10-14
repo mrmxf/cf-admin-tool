@@ -25,8 +25,10 @@ src/deliver.js     the code email (Mailtrap), the push code (ntfy), sendMail
 src/turnstile.js   siteverify, with the hostname check
 src/html.js        html`` (escapes everything) and raw()
 src/templates.js   the core templates, DEFAULT_COPY, the theme CSS
+src/tiles.js       dashboard tiles: checked, sorted; the core's health tile
 src/plugins/       formsPlugin and its templates
-src/modules/       forms (read-only FORM_DB), events (append-only log), health
+src/modules/       forms (read-only FORM_DB), events (append-only log), settings
+                   (append-only), health
 src/views.js, workflows.js, approval.js, markdown.js, dates.js   formsPlugin's parts
 src/patch.js       submission -> active: merge patches, diffs, the fixed fields
 src/csp.js         the CSP, and its per-page script hashes
@@ -66,6 +68,11 @@ releases.yaml      version history, newest first. NOT a golang project: tags hav
   `submission` frozen. Every page and every workflow reads records through
   `withEvents`. `id` and `workflow` are never patchable. Queries (which rows) stay
   on the submission.
+- **The dashboard is tiles only.** A plugin's `dashboard()` returns tile objects
+  (`src/tiles.js`); the core never renders a plugin's html on the dashboard.
+- **Settings are append-only too**: `settings_events`, INSERT and SELECT only, per origin.
+- **A workflow's `next` stays under the admin root** (`safeNext`): a workflow can
+  never redirect the browser off the admin.
 - **Scripts only by hash.** A workflow page's `scripts` are inlined and allowed by
   their sha256 in that response's CSP (`src/csp.js`). No `'unsafe-inline'`, no CDN,
   no script route.

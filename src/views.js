@@ -20,7 +20,14 @@
  *   workflow  a workflow id: once it has run, its latest statusMessage linked to
  *             the submission; before, a button to run it (disabled until the
  *             workflow has a run()) - see workflowEvent below
- * An empty cell is blank.
+ * An empty cell is blank. A workflow column may add `statusText`, mapping a
+ * status to what the cell shows instead of the event's statusMessage, e.g.
+ *   { label: "Approval", workflow: "wf02", statusText: { 500: "‼️ phone them" } }
+ * - display only: the event, and the record page's history, keep the original.
+ *
+ * NOTICE, optional: `notice: async ({ env, origin, admin }) => html` is shown
+ * above the table - e.g. a warning that a limit is exceeded. A throw is logged
+ * and shows nothing.
  *
  * NARROW SCREENS show the date (no time, headed "Date"), the columns marked `narrow`, and an
  * eye button that opens the whole row. `narrow: 30` shows the first 30
@@ -51,6 +58,13 @@ export function normaliseViews(list = [], { forms, workflows }) {
         throw new Error(`${where}: column "${c.label}" narrow must be a number of characters or "fill"`);
       }
       if (c.workflow !== undefined && c.narrow !== undefined) throw new Error(`${where}: a workflow column cannot be narrow`);
+      if (c.statusText !== undefined) {
+        const e = c.statusText && typeof c.statusText === "object" && !Array.isArray(c.statusText) ? Object.entries(c.statusText) : null;
+        if (c.workflow === undefined || !e?.length
+            || e.some(([k, v]) => !/^[1-5]\d\d$/.test(k) || typeof v !== "string" || !v.trim() || v.length > 120)) {
+          throw new Error(`${where}: column "${c.label}" statusText must map HTTP statuses to short text, on a workflow column`);
+        }
+      }
       if (c.workflow !== undefined) {
         const w = workflows.find((x) => x.id === c.workflow);
         if (!w) throw new Error(`${where}: column "${c.label}" names workflow "${c.workflow}", which is not in formsPlugin's workflows`);
@@ -58,7 +72,8 @@ export function normaliseViews(list = [], { forms, workflows }) {
       }
     }
     if (v.columns.filter((c) => c.narrow === "fill").length > 1) throw new Error(`${where}: only one column can be narrow: "fill"`);
-    return { id: v.id, label: v.label || v.id, form: v.form, outcome: v.outcome || "sent", columns: v.columns };
+    if (v.notice !== undefined && typeof v.notice !== "function") throw new Error(`${where}: notice must be a function`);
+    return { id: v.id, label: v.label || v.id, form: v.form, outcome: v.outcome || "sent", columns: v.columns, notice: v.notice };
   });
 }
 

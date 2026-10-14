@@ -4,11 +4,16 @@
  *
  *   formsPlugin({
  *     toRecord,                      // required: cf-form-mailer's row -> record
- *     list: [{ id, label, path, service }],
+ *     list: [{ id, label, path, service, tile }],   // tile: its dashboard title (default label)
  *     workflows: [...],              // see ../workflows.js; approvalWorkflow() makes one
  *     views: [...],                  // see ../views.js
  *     path: "/forms",                // where it is mounted under the admin root
+ *     tile: "Forms",                 // the all-forms dashboard tile's title (default label)
  *   })
+ *
+ * DASHBOARD: one tile for all the forms ("forms"), then one per form
+ * ("form-<id>"), linked to its view if it has one. /forms shows the per-form
+ * tiles too, the same objects, so the names match everywhere.
  *
  * Its pages, under <root><path> (default /admin/forms):
  *   GET  /                           per form: totals and the newest submission
@@ -36,11 +41,26 @@ import { normaliseWorkflows, workflowsFor } from "../workflows.js";
 import { normaliseViews } from "../views.js";
 import { FORMS_TEMPLATES } from "./forms-templates.js";
 
+/**
+ * Where a workflow's `next` may send the browser: a path under the admin root,
+ * nothing else. Anything that could leave the site, or the admin, is null (the
+ * caller then uses its usual `back`).
+ */
+export function safeNext(next, root) {
+  if (typeof next !== "string" || next.length > 2000) return null;
+  if (!next.startsWith(`${root}/`) && next !== root) return null;
+  if (/[\\\s\x00-\x1f]/.test(next) || next.includes("//")) return null;
+  // Dot segments, %2e ones included, are resolved the way a browser would.
+  const u = new URL(next, "https://admin.invalid");
+  if (u.origin !== "https://admin.invalid" || (u.pathname !== root && !u.pathname.startsWith(`${root}/`))) return null;
+  return `${u.pathname}${u.search}${u.hash}`;
+}
+
 const RECORD = /^\/([a-z0-9-]+)(?:\/([0-9a-f-]{36}))?$/;
 const RUN = /^\/([a-z0-9-]+)\/([0-9a-f-]{36})\/run\/([a-z0-9-]+)$/;
 const VIEW = /^\/views\/([a-z0-9-]+)$/;
 
-export function formsPlugin({ toRecord, list = [], workflows = [], views = [], path = "/forms", label = "Forms" } = {}) {
+export function formsPlugin({ toRecord, list = [], workflows = [], views = [], path = "/forms", label = "Forms", tile = "" } = {}) {
   if (typeof toRecord !== "function") {
     throw new Error("formsPlugin: toRecord is required - pass cf-form-mailer's toRecord");
   }
@@ -49,10 +69,27 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
       throw new Error("formsPlugin: each list entry needs id, label and path");
     }
     if (f.id === "views") throw new Error('formsPlugin: "views" cannot be a form id - it is where the views live');
+    if (f.tile !== undefined && (typeof f.tile !== "string" || !f.tile.trim())) throw new Error(`formsPlugin: form "${f.id}" tile must be a title`);
   }
   const forms = list;
   const wfs = normaliseWorkflows(workflows);
   const vs = normaliseViews(views, { forms, workflows: wfs });
+
+  // The tiles: all forms, then one per form - the dashboard's and /forms's.
+  const formTile = ({ base, c }, { form, stats }) => {
+    const view = vs.find((v) => v.form === form.id);
+    return {
+      id: `form-${form.id}`, title: form.tile || form.label,
+      href: view ? `${base}/views/${view.id}` : `${base}/${form.id}`,
+      lines: [`${stats.outcomes.sent?.count ?? 0} sent of ${stats.total} submitted`,
+        `newest: ${stats.latest ? c.fmtDateTime(stats.latest.timestamp) : "none yet"}`],
+    };
+  };
+  const allTile = (base, stats) => {
+    const n = stats.reduce((sum, f) => sum + f.stats.total, 0);
+    return { id: "forms", title: tile || label, href: base,
+      lines: [`${n} submission${n === 1 ? "" : "s"} across ${forms.length} form${forms.length === 1 ? "" : "s"}`] };
+  };
 
   const allStats = (env, origin) => Promise.all(forms.map(async (form) => ({
     form, stats: await formStats(env.FORM_DB, form.id, origin),
@@ -102,9 +139,9 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
           .catch((err) => { throw new Error(`event NOT logged ${JSON.stringify(r.event)} for ${record.id}: ${err.message}`); });
         console.log(`[admin] ${user.email} ${r.event.event} ${r.event.status} on ${form.id}/${record.id}`);
         if (r.body) return await wfPage({ body: r.body }, r.status ?? 200, r.scripts);
-        return admin.redirect(back);
+        return admin.redirect(safeNext(r.next, admin.root) ?? back);
       }
-      if (r?.back) return admin.redirect(back);
+      if (r?.back) return admin.redirect(safeNext(r.next, admin.root) ?? back);
       if (r?.body) return await wfPage({ body: r.body }, r.status ?? 200, r.scripts);
       throw new Error("run() returned no body, back or event");
     } catch (err) {
@@ -133,10 +170,15 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
           if (!page) return null;
           const form = forms.find((f) => f.id === view.form);
           await withEvents(env.ADMIN_DB, { origin: url.origin, form: form.id, records: page.records });
-          return admin.page(view.label, t.dashboardView(c, { view, form, workflows: workflowsFor(wfs, form.id), ...page }), { wide: true });
+          const notice = view.notice ? await view.notice({ env, origin: url.origin, admin }).catch((err) => {
+            console.log(`[admin] view ${view.id} notice failed: ${err.stack || err.message}`);
+            return "";
+          }) : "";
+          return admin.page(view.label, t.dashboardView(c, { view, form, workflows: workflowsFor(wfs, form.id), notice, ...page }), { wide: true });
         }
         if (admin.path === "/") {
-          return admin.page("Forms", t.formsIndex(c, { forms: await allStats(env, url.origin), origin: url.origin, views: vs }));
+          const stats = await allStats(env, url.origin);
+          return admin.page("Forms", t.formsIndex(c, { tiles: stats.map((f) => formTile(admin, f)), origin: url.origin }));
         }
         const m = admin.path.match(RECORD);
         const form = m && forms.find((f) => f.id === m[1]);
@@ -161,7 +203,7 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
 
     async dashboard(env, admin) {
       const stats = env.FORM_DB ? await allStats(env, admin.url.origin).catch(() => []) : [];
-      return admin.t.formsCard(admin.c, { forms: stats });
+      return [allTile(admin.base, stats), ...stats.map((f) => formTile(admin, f))];
     },
 
     async health(env, admin) {

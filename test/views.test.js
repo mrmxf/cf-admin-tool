@@ -143,15 +143,15 @@ test("a view is one compact row per sent submission, escaped; narrow classes; wo
 
   let res = await call("/admin", { cookie: auth });
   const dash = await res.text();
-  assert.match(dash, /Health/, "all is the dashboard as before");
+  assert.match(dash, /id="tile-admin-health"/, "all is the dashboard as before");
   assert.doesNotMatch(dash, /aria-label="Dashboard views"/, "no view tabs");
   assert.doesNotMatch(dash, /Workflows/, "no workflows card");
 
   res = await call("/admin/forms", { cookie: auth });
   const idx = await res.text();
   assert.match(idx, /<h3><a href="\/admin\/forms\/views\/parking">Parking<\/a><\/h3>/, "a form with a view links to it");
-  assert.match(idx, /<p class="count">2 sent of 3 submitted<\/p>/);
-  assert.match(idx, /<em>newest<\/em>: 2026-10-01 @ 11:00/);
+  assert.match(idx, /<p>2 sent of 3 submitted<\/p>/);
+  assert.match(idx, /<p>newest: 2026-10-01 @ 11:00<\/p>/);
 
   res = await call("/admin/forms/views/parking", { cookie: auth });
   assert.equal(res.status, 200);

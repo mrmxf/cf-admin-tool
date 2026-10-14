@@ -12,8 +12,13 @@
  *   POST <root>/login/code         email ok -> ntfy stage; ntfy ok -> session -> <root>
  *   POST <root>/login/resend       a new phone code (ntfy stage only, NTFY_RESENDS max)
  *   POST <root>/logout
- *   GET  <root>                    signed in: the dashboard - plugin tiles + health
+ *   GET  <root>                    signed in: the dashboard - tiles only (tiles.js)
+ *   GET  <root>/checks             signed in: the health checks as a table
  *   *    <root><plugin.path>/...   signed in: plugin.fetch(request, env, ctx, admin)
+ *
+ * config.dashboard.order (optional): tile ids to show first, in that order; the
+ * rest are alphabetical by title (tiles.js sortTiles). The core adds one tile,
+ * "admin-health", titled copy.healthTile, which links to <root>/checks.
  *
  * config.requireSecondFactor (default true) gates the ntfy stage - see the
  * SECOND FACTOR GATE in auth.js. Off: the emailed code alone signs you in, and
@@ -23,7 +28,7 @@
  *   { id: "forms",                       [a-z0-9-], unique
  *     path: "/forms", label: "Forms",    mount point (one segment) and nav link
  *     fetch(request, env, ctx, admin),   -> Response, or null for "not found"
- *     dashboard(env, admin),             optional: html`` tile(s) for the dashboard
+ *     dashboard(env, admin),             optional: an ARRAY of tiles for the dashboard (tiles.js)
  *     health(env, admin),                optional: [{name, ok, detail}] for the dashboard
  *     flags(env),                        optional: {flag: boolean} for the public /health
  *     templates: { name: (ctx, data) => html`` } }   defaults; config.templates wins
@@ -69,6 +74,7 @@ import { DEFAULT_TEMPLATES, DEFAULT_COPY, TOKENS } from "./templates.js";
 import { coreChecks, coreFlags } from "./modules/health.js";
 import { dateFormatters } from "./dates.js";
 import { CSP } from "./csp.js";
+import { checkTile, sortTiles, healthTile } from "./tiles.js";
 
 const CHALLENGE_COOKIE = "__Host-admin-ch";
 const SESSION_COOKIE = "__Host-admin-s";
@@ -92,7 +98,7 @@ const DEFAULT_HEADERS = {
 const ROOT = /^(\/[a-z0-9_-]+)+$/;
 const PLUGIN_ID = /^[a-z0-9-]{1,40}$/;
 const MOUNT = /^\/[a-z0-9-]{1,40}$/;
-const RESERVED = new Set(["/login", "/logout", "/health"]);
+const RESERVED = new Set(["/login", "/logout", "/health", "/checks"]);
 const HOOKS = ["fetch", "dashboard", "health", "flags"];
 
 export function normaliseRoot(r) {
@@ -107,6 +113,10 @@ function checkConfig(config) {
   const theme = site.theme?.dark || site.theme?.light;
   const missing = TOKENS.filter((k) => !theme?.[k]);
   if (missing.length) throw new Error(`createAdmin: site.theme is missing ${missing.join(", ")}`);
+  const order = config.dashboard?.order;
+  if (order !== undefined && (!Array.isArray(order) || order.some((id) => typeof id !== "string"))) {
+    throw new Error("createAdmin: dashboard.order must be an array of tile ids");
+  }
   if (config.forms || config.workflows || config.views) {
     throw new Error("createAdmin: forms, workflows and views moved into a plugin - " +
       "plugins: [formsPlugin({ toRecord, list, workflows, views })]");
@@ -225,6 +235,7 @@ export function createAdmin(config) {
   const configRoot = normaliseRoot(config.root ?? "/admin");
   const secondFactor = config.requireSecondFactor !== false;
   const liveHost = new URL(config.site.url).host;
+  const tileOrder = config.dashboard?.order ?? [];
 
   return {
     async fetch(request, env, ctx) {
@@ -374,16 +385,29 @@ export function createAdmin(config) {
         }
       };
 
-      if (path === "/") {
+      const checks = () => Promise.all([
+        coreChecks(env, { secondFactor }),
+        ...plugins.filter((p) => p.health).map((p) => guarded(p, "health",
+          [{ name: `Plugin: ${p.label || p.id}`, ok: false, detail: "its health check failed - see the Worker log" }],
+          () => p.health(env, adminFor(p)))),
+      ]).then((all) => all.flat());
+
+      if (path === "/" || path === "/checks") {
         if (!GET) return text("Method not allowed", 405, { allow: "GET, HEAD" });
-        const [core, extra, cards] = await Promise.all([
-          coreChecks(env, { secondFactor }),
-          Promise.all(plugins.filter((p) => p.health).map((p) => guarded(p, "health",
-            [{ name: `Plugin: ${p.label || p.id}`, ok: false, detail: "its health check failed - see the Worker log" }],
-            () => p.health(env, adminFor(p))))),
-          Promise.all(plugins.filter((p) => p.dashboard).map((p) => guarded(p, "dashboard", "", () => p.dashboard(env, adminFor(p))))),
+        if (path === "/checks") return page(copy.healthTile, templates.healthPage(c, { checks: await checks() }));
+        const [all, extra] = await Promise.all([
+          checks(),
+          Promise.all(plugins.filter((p) => p.dashboard).map(async (p) => {
+            const tiles = await guarded(p, "dashboard", [], () => p.dashboard(env, adminFor(p)));
+            if (!Array.isArray(tiles)) {
+              console.log(`[admin] plugin ${p.id} dashboard: must return an array of tiles - ignored`);
+              return [];
+            }
+            return tiles.map((t) => checkTile(t, `plugin ${p.id}`)).filter(Boolean);
+          })),
         ]);
-        return page("Dashboard", templates.dashboard(c, { checks: [...core, ...extra.flat()], cards }));
+        const tiles = sortTiles([healthTile(all, { title: copy.healthTile, href: `${root}/checks` }), ...extra.flat()], tileOrder);
+        return page("Dashboard", templates.dashboard(c, { tiles }));
       }
 
       const p = plugins.find((x) => x.path && (path === x.path || path.startsWith(`${x.path}/`)));

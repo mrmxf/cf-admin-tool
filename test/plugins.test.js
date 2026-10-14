@@ -14,7 +14,6 @@ const USERS = JSON.stringify([{ email: "staff@example.org" }]);
 let seen;
 const echo = {
   id: "echo", path: "/echo", label: "Echo",
-  templates: { echoTile: (ctx) => html`<div class="tile" id="echo-tile">${ctx.base}</div>` },
   async fetch(request, env, ctx, admin) {
     seen = { cookie: request.headers.get("cookie"), path: admin.path, base: admin.base, user: admin.user.email };
     if (admin.path === "/page") return admin.page("Echo", html`<p id="echo-page">${admin.c.base}</p>`);
@@ -25,17 +24,22 @@ const echo = {
     if (request.method === "POST") return new Response(`posted ${(await request.formData()).get("x")}`);
     return null;
   },
-  async dashboard(env, admin) { return admin.t.echoTile(admin.c); },
+  async dashboard(env, admin) {
+    return [{ id: "echo", title: "🔊echo", href: admin.base, lines: ["<b>loud</b>"], tone: "warn" },
+      { id: "Bad id", title: "dropped" }];
+  },
   async health() { return [{ name: "Echo", ok: true, detail: "fine" }]; },
   async flags() { return { echo: true }; },
 };
+const legacy = { id: "legacy", async dashboard() { return html`<div class="tile">old</div>`; } };
+const alpha = { id: "alpha", async dashboard() { return [{ id: "zebra", title: "Zebra" }, { id: "apple", title: "🍎 apple" }]; } };
 const broken = {
   id: "broken",
   async health() { throw new Error("nope"); },
   async dashboard() { throw new Error("nope"); },
 };
 
-const admin = createAdmin({ site: SITE, requireSecondFactor: false, plugins: [echo, broken] });
+const admin = createAdmin({ site: SITE, requireSecondFactor: false, plugins: [echo, broken, legacy, alpha] });
 
 let env, realLog, realFetch;
 beforeEach(() => {
@@ -100,12 +104,27 @@ test("a plugin's response gets the core's headers, and cannot set the admin cook
 
 test("the dashboard has each plugin's tile, nav link and health; a failing plugin is shown, not fatal", async () => {
   const page = await (await call("/admin", { cookie: await session() })).text();
-  assert.match(page, /<div class="tile" id="echo-tile">\/admin\/echo<\/div>/);
+  assert.match(page, /<div class="tile warn" id="tile-echo">\s*<h3><a href="\/admin\/echo">🔊echo<\/a><\/h3>\s*<p>&lt;b&gt;loud&lt;\/b&gt;<\/p>/, "a tile, its lines escaped");
   assert.match(page, /<a href="\/admin\/echo">Echo<\/a>/);
-  assert.match(page, /<td>Echo<\/td>/);
-  assert.match(page, /<td>Plugin: broken<\/td><td><span class="status bad">/);
+  assert.doesNotMatch(page, /dropped|>old</, "a bad tile and an html dashboard() are dropped");
+  assert.match(page, /<div class="tile bad" id="tile-admin-health">[\s\S]*?❌ 1 of \d+ checks failing/, "the failing plugin health shows on the health tile");
+  const order = [...page.matchAll(/id="tile-([a-z-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(order, ["apple", "echo", "admin-health", "zebra"], "alphabetical, emoji ignored");
+  const checks = await (await call("/admin/checks", { cookie: await session() })).text();
+  assert.match(checks, /<td>Echo<\/td>/);
+  assert.match(checks, /<td>Plugin: broken<\/td><td><span class="status bad">/);
+  assert.equal((await call("/admin/checks")).headers.get("location"), "/admin/login", "the checks page is signed in only");
   const health = await (await call("/admin/health")).json();
   assert.equal(health.echo, true, "plugin flags are merged into the public health");
+});
+
+test("dashboard.order puts those tiles first; the rest stay alphabetical", async () => {
+  const ordered = createAdmin({ site: SITE, requireSecondFactor: false, plugins: [echo, alpha], dashboard: { order: ["zebra", "admin-health"] } });
+  const auth = await session();
+  const page = await (await ordered.fetch(new Request(`${ORIGIN}/admin`, { headers: { cookie: auth } }), env, { waitUntil() {} })).text();
+  assert.deepEqual([...page.matchAll(/id="tile-([a-z-]+)"/g)].map((m) => m[1]), ["zebra", "admin-health", "apple", "echo"]);
+  assert.throws(() => createAdmin({ site: SITE, dashboard: { order: "zebra" } }), /dashboard.order/);
+  assert.throws(() => normalisePlugins([{ id: "a", path: "/checks", fetch() {} }]), /must be one segment/, "/checks is the core's");
 });
 
 test("Fetch Metadata: only a top-level navigation reaches a page", async () => {

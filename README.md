@@ -23,7 +23,8 @@ export default createAdmin({
   site: SITE,                                   // name, url, lang, fonts, theme (11 tokens)
   timeZone: "Europe/London",                    // how times are shown
   requireSecondFactor: true,                    // the push code after the emailed one
-  copy: { dashboardIntro: "..." },              // any key of DEFAULT_COPY
+  copy: { dashboardIntro: "...", healthTile: "Health" },  // any key of DEFAULT_COPY
+  dashboard: { order: ["admin-health"] },       // optional: tile ids first; the rest alphabetical
   templates: { header: (ctx) => html`...` },    // any template, core or plugin, by name
   plugins: [
     formsPlugin({
@@ -37,7 +38,7 @@ export default createAdmin({
 });
 ```
 
-Install it pinned to a tag, as the form engine is: `"@mrmxf/cf-admin-tool": "github:mrmxf/cf-admin-tool#0.2.0"`.
+Install it pinned to a tag, as the form engine is: `"@mrmxf/cf-admin-tool": "github:mrmxf/cf-admin-tool#0.4.0"`.
 Tags have no leading `v`.
 
 ## Routes
@@ -49,7 +50,8 @@ Tags have no leading `v`.
 | `GET/POST <root>/login/code` | no | step 1: the emailed code; step 2: the push code |
 | `POST <root>/login/resend` | no | a new push code (second factor on only) |
 | `POST <root>/logout` | yes | |
-| `GET <root>` | yes | the dashboard: each plugin's tile, and a health table |
+| `GET <root>` | yes | the dashboard: tiles only (below) |
+| `GET <root>/checks` | yes | every health check, as a table; the health tile links here |
 | `* <root><plugin.path>/...` | yes | the plugin's `fetch()` |
 
 There is no public plugin route.
@@ -61,7 +63,7 @@ A plugin is an object shaped like a Worker, mounted at ONE path segment:
 ```js
 const notes = {
   id: "notes",                    // [a-z0-9-], unique
-  path: "/notes",                 // <root>/notes/...; not /login, /logout, /health
+  path: "/notes",                 // <root>/notes/...; not /login, /logout, /health, /checks
   label: "Notes",                 // a link in the header nav (omit for none)
 
   // Required with `path`. The usual Worker signature plus `admin`. Return a
@@ -71,7 +73,9 @@ const notes = {
     return admin.page("Notes", admin.t.notesPage(admin.c, { who: admin.user.email }));
   },
 
-  async dashboard(env, admin) { return html`<div class="tile">...</div>`; },  // optional
+  async dashboard(env, admin) {                                              // optional: tiles
+    return [{ id: "notes", title: "📝notes", href: admin.base, lines: ["3 new"], tone: "ok" }];
+  },
   async health(env, admin) { return [{ name: "Notes", ok: true, detail: "fine" }]; }, // optional
   async flags(env) { return { notesDb: true }; },                             // optional, PUBLIC
   templates: { notesPage: (ctx, { who }) => html`<h1>Notes for ${who}</h1>` }, // optional defaults
@@ -92,7 +96,54 @@ const notes = {
 
 Templates a plugin ships are defaults: `config.templates` overrides them by
 name, like the core's. A throw from `fetch()` is logged and becomes a generic
-503; from `dashboard()` or `health()`, a failed row in the health table.
+503; from `health()`, a failed check; from `dashboard()`, no tiles.
+
+### The dashboard: tiles
+
+The dashboard is tiles and nothing else. A tile is a plain object, drawn by the
+one `dashboardTile` template:
+
+```js
+{ id: "notes",            // [a-z0-9-], unique on the dashboard
+  title: "📝notes",       // the heading, and what it sorts by
+  href: "/admin/notes",   // optional: the heading links here (a path on this site)
+  lines: ["3 new"],       // optional: strings or html``, one <p> each, escaped
+  tone: "ok" }            // optional: "ok" | "warn" | "bad" - the edge colour
+```
+
+`dashboard()` returns an **array** of them. Anything else (html, as before
+0.4.0) is logged and dropped, as is a malformed tile. The core adds one, `admin-health`
+(titled `copy.healthTile`): all checks passing, or how many fail, linked to
+`<root>/checks`; it is `bad` while any check fails.
+
+**Order:** `config.dashboard.order` lists tile ids to show first, in that order;
+every other tile follows alphabetically by title, ignoring any leading emoji or
+symbols (`sortKey`: "🅿️status" sorts as "status").
+
+### Building blocks for a consumer's own plugins
+
+Exported for plugins that are not formsPlugin - a phone list, a settings page:
+
+| | |
+|---|---|
+| `allSubmissions(FORM_DB, {formId, origin, outcome, toRecord, max})` | every matching row (pages joined, default cap 2000), read-only like all of FORM_DB |
+| `listSubmissions(...)` | one page of 50 |
+| `withEvents(ADMIN_DB, {origin, form, records})` | the records made ACTIVE, their logged events added |
+| `latestEvents(ADMIN_DB, {origin, form, workflow})` | Map uid -> the latest event of one workflow, for counting across all submissions in one query |
+| `workflowEvent(record, id)`, `eventText(e)` | a record's latest event of a workflow, and its display text |
+| `readSetting`, `settingHistory`, `appendSetting` | settings, below |
+| `cspWithScripts(sources)` | a CSP allowing exactly these inline scripts, for a plugin page that sets its own |
+
+A plugin never writes a workflow event itself: it links or POSTs to the
+workflow (`<root>/forms/<form>/<uid>/run/<wf>`) and the workflow's `next` brings
+the browser back (Workflows, below).
+
+**Settings** are values an admin changes, e.g. a limit: `settings_events` in
+`ADMIN_DB` (migration 0005), append-only like the workflow log - a change is a
+new row with who (`actor`), why (`details`) and when; the latest row per
+`(origin, key)` is the value. Values are strings; the consumer checks and parses
+them. `readSetting` returns `null` for a key never set, so the consumer decides
+the default.
 
 **What the core enforces on every plugin** (see Security):
 
@@ -214,7 +265,7 @@ Mounted at `/forms` (option `path`):
 
 | Route | What |
 |---|---|
-| `GET <root>/forms` | per form: total entries, most recent submission |
+| `GET <root>/forms` | one tile per form (the dashboard's): sent of submitted, the newest |
 | `GET <root>/forms/views/<id>` | one of `views`: a compact table over one form, `?cursor=` |
 | `GET <root>/forms/<id>` | browse, newest first, `?outcome=` `?cursor=` |
 | `GET <root>/forms/<id>/<uid>` | one submission: answers, workflows (`#wf-<id>`), history, session signals |
@@ -245,10 +296,16 @@ opens the whole row, transposed, as the wide table shows it - a `popover`, so no
 script: the CSP allows none of ours. Beside it, the row's **badge** (below,
 Workflows), when the form's workflows declare any.
 
-A `workflow` cell is the workflow's latest event, its `statusMessage` linked to
-the workflow on the submission page; before it has run, a button named after the
+A `workflow` cell is the workflow's latest event, its `statusMessage` (or the
+column's `statusText` for that status, e.g. `statusText: { 500: "‼️ phone them" }` -
+display only, the history keeps what was logged) linked to the workflow on the
+submission page; before it has run, a button named after the
 workflow, disabled while it has no `run()`. A bad view (unknown form or
 workflow, duplicate id, two fills) throws at construction.
+
+A view's optional `notice: async ({ env, origin, admin }) => html` is shown
+above its table, e.g. a warning that a limit is exceeded. A throw is logged and
+shows nothing.
 
 ### Workflows
 
@@ -272,6 +329,11 @@ read-only here. A malformed event is refused and nothing is logged.
 A workflow is `{ id, label, description, forms, run, badge, badgeRank }`; the
 contract for `run` is at the top of `src/workflows.js`. Without `run` it is a
 disabled button.
+
+**`next`:** a result of `{ event, next }` or `{ back: true, next }` sends the
+browser to `next` instead of the form's view - for a workflow started from a
+plugin's own page. It must be a path under the admin root (checked after dot
+segments are resolved, `%2e` included); anything else falls back to the view.
 
 **Badges** give a view's narrow-screen row one emoji. `badge` maps the status of
 the workflow's latest event to it, read from the log like everything else:

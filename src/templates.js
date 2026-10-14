@@ -38,6 +38,7 @@ export const DEFAULT_COPY = {
   ntfyCodeHeading: "Check your phone",
   ntfyCodeIntro: "A second six-digit code has been sent to the ntfy app on your phone. It expires in 5 minutes.",
   dashboardIntro: "",
+  healthTile: "Health",
   formsIntro: "Submissions made on this domain.",
   notLiveLabel: "Not the live site",
 };
@@ -95,6 +96,8 @@ const styles = (site) => `
   .cf-turnstile { margin-top: 1.25rem; min-height: 65px; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; }
   .tile { background: var(--surface); border-left: 4px solid var(--primary); padding: 1rem 1.25rem; }
+  .tile.warn { border-left-color: var(--meta); }
+  .tile.bad { border-left-color: var(--error); }
   .tile h3 { margin: 0 0 .35rem; font-size: 1.1rem; }
   .tile p { margin: .25rem 0; }
   .big { font-size: 2rem; font-weight: 700; line-height: 1.1; }
@@ -241,16 +244,22 @@ ${body}
     <p><a href="${ctx.root}/login">Start again</a></p>
   </div>`,
 
-  /**
-   * data: {checks, cards} - `cards` is what each plugin's dashboard() returned
-   * (a .tile each, by convention), in plugin order.
-   */
-  dashboard: (ctx, { checks, cards = [] }) => html`
+  /** data: {tiles} - already checked and in order (tiles.js) */
+  dashboard: (ctx, { tiles = [] }) => html`
     <h1>Dashboard</h1>
     ${ctx.copy.dashboardIntro ? html`<p class="meta">${ctx.copy.dashboardIntro}</p>` : ""}
-    ${cards.length ? html`<h2>Options</h2>
-    <div class="tiles">${cards}</div>` : ""}
-    <h2>Health</h2>
+    <div class="tiles">${tiles.map((tile) => ctx.t.dashboardTile(ctx, { tile }))}</div>`,
+
+  /** One tile (tiles.js), on the dashboard or any page that shows tiles. data: {tile} */
+  dashboardTile: (ctx, { tile: { id, title, href, lines, tone } }) => html`<div class="tile${tone ? ` ${tone}` : ""}" id="tile-${id}">
+    <h3>${href ? html`<a href="${href}">${title}</a>` : title}</h3>${lines.map((l) => html`
+    <p>${l}</p>`)}
+  </div>`,
+
+  /** <root>/checks: every health check. data: {checks} */
+  healthPage: (ctx, { checks }) => html`
+    <p><a href="${ctx.root}">&larr; Dashboard</a></p>
+    <h1>${ctx.copy.healthTile}</h1>
     <div class="scroll"><table>
       <thead><tr><th scope="col">Check</th><th scope="col">Status</th><th scope="col">Detail</th></tr></thead>
       <tbody>${checks.map((c) => html`<tr><td>${c.name}</td><td>${status(c.ok)}</td><td>${c.detail}</td></tr>`)}</tbody>

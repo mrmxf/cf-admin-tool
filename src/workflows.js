@@ -41,6 +41,8 @@
  *                      allowed by their sha256 in that page's CSP only (csp.js)
  *   { back: true }     cancel: back to the view; nothing is recorded
  *   { event }          done: the event is checked and appended, then back
+ *   ...either of those may add `next`: a path under the admin root to go to
+ *                      instead of the view (plugins/forms.js safeNext checks it)
  *   { event, body }    the event is appended, then this page is shown - e.g. a
  *                      failure logged, with the form kept for another try
  */

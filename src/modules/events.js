@@ -75,3 +75,22 @@ export async function withEvents(db, { origin, form, records }) {
   });
   return records;
 }
+
+/**
+ * The latest logged event of workflow `workflow` for every submission of `form`
+ * on `origin` that has one: Map uid -> {event, status, statusMessage, timestamp}.
+ * One SELECT, for counting across all submissions (e.g. how many are approved)
+ * without reading FORM_DB. Logged events only, not a record's own.
+ */
+export async function latestEvents(db, { origin, form, workflow }) {
+  if (!/^[a-z0-9-]{1,40}$/.test(String(workflow ?? ""))) throw new Error(`workflow id "${workflow}" is not valid`);
+  if (!db) return new Map();
+  const mine = "(event = ? OR substr(event, 1, ?) = ?)";
+  const args = [workflow, workflow.length + 1, `${workflow}-`];
+  const { results = [] } = await db.prepare(
+    `SELECT uid, event, status, status_message AS statusMessage, timestamp FROM workflow_events w
+     WHERE origin = ? AND form = ? AND ${mine}
+       AND id = (SELECT MAX(id) FROM workflow_events x WHERE x.origin = w.origin AND x.form = w.form AND x.uid = w.uid AND ${mine.replaceAll("event", "x.event")})`,
+  ).bind(origin, form, ...args, ...args).all();
+  return new Map(results.map(({ uid, ...e }) => [uid, e]));
+}

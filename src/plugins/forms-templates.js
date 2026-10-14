@@ -15,11 +15,14 @@ const EYE = raw(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 /** The css class of a view column: n (narrow, clipped), fill, or w (wide screens only). */
 const colClass = (col) => (col.narrow === "fill" ? "fill" : col.narrow ? "n" : "w");
 
-/** A workflow's cell: its latest statusMessage linked to it, else a button to start it. */
-function workflowCell(ctx, { form, record, workflow: w }) {
+/**
+ * A workflow's cell: its latest statusMessage (or the column's statusText for
+ * that status) linked to it, else a button to start it.
+ */
+function workflowCell(ctx, { form, record, workflow: w, col }) {
   const at = `${ctx.base}/${form.id}/${record.id}`;
   const e = workflowEvent(record, w.id);
-  if (e) return html`<a href="${at}#wf-${w.id}">${eventText(e)}</a>`;
+  if (e) return html`<a href="${at}#wf-${w.id}">${col?.statusText?.[e.status] ?? eventText(e)}</a>`;
   return workflowButton(ctx, { form, record, workflow: w });
 }
 
@@ -45,21 +48,15 @@ function workflowButton(ctx, { form, record, workflow: w }) {
 }
 
 export const FORMS_TEMPLATES = {
-  /** The dashboard tile. data: {forms: [{form, stats}]} */
-  formsCard: (ctx, { forms }) => html`<div class="tile">
-    <h3><a href="${ctx.base}">Forms</a></h3>
-    <p class="big">${forms.reduce((n, f) => n + f.stats.total, 0)}</p>
-    <p class="meta">submissions across ${forms.length} form${forms.length === 1 ? "" : "s"}</p>
-  </div>`,
-
   /**
    * One of config.views: one compact row per submission, the full page width.
    * Narrow screens keep the date, the `narrow` columns and an eye button, which
    * opens the whole row (a popover: no script, the CSP allows none of ours),
    * with the row's workflow badge beside it (views.js rowBadge).
-   * data: {view, form, workflows, records, next}
+   * `notice` is what the view's notice() returned (html, or "").
+   * data: {view, form, workflows, records, next, notice}
    */
-  dashboardView: (ctx, { view, form, workflows, records, next }) => {
+  dashboardView: (ctx, { view, form, workflows, records, next, notice = "" }) => {
     const at = (r) => `${ctx.base}/${form.id}/${r.id}`;
     const wf = (col) => workflows.find((w) => w.id === col.workflow);
     const badges = workflows.some((w) => w.badge);
@@ -70,7 +67,7 @@ export const FORMS_TEMPLATES = {
       return b ? html`<span class="badge" role="img" aria-label="${b.title}" title="${b.title}"><small>${b.emoji}</small></span>` : html`<span class="badge"></span>`;
     };
     const td = (col, r) => {
-      if (col.workflow) return html`<td class="w">${workflowCell(ctx, { form, record: r, workflow: wf(col) })}</td>`;
+      if (col.workflow) return html`<td class="w">${workflowCell(ctx, { form, record: r, workflow: wf(col), col })}</td>`;
       const text = cell(col, r);
       const mark = editedMark(col, r, text);
       if (Number.isInteger(col.narrow) && text.length > col.narrow) {
@@ -83,6 +80,7 @@ export const FORMS_TEMPLATES = {
     <h1>${view.label}</h1>
     <p class="meta">${form.label} made on <code>${ctx.host}</code>, newest first${view.outcome === "all" ? "" : html`,
       ${view.outcome} only`}. <a href="${ctx.base}/${form.id}">Every entry</a></p>
+    ${notice}
     ${records.length === 0 ? html`<p class="meta">Nothing to show.</p>` : html`
     <div class="scroll"><table class="compact">
       <thead><tr><th scope="col"><span class="d-full">Submitted</span><span class="d-short">Date</span></th>${view.columns.map((col) => html`<th scope="col" class="${colClass(col)}">${col.label}</th>`)}<th scope="col" class="eye"><span class="sr">View</span></th></tr></thead>
@@ -111,7 +109,7 @@ export const FORMS_TEMPLATES = {
   recordDetails: (ctx, { form, view, record, workflows = null }) => {
     const rows = view
       ? view.columns.filter((col) => !col.workflow || workflows).map((col) => [col.label, col.workflow
-        ? workflowCell(ctx, { form, record, workflow: workflows.find((w) => w.id === col.workflow) })
+        ? workflowCell(ctx, { form, record, workflow: workflows.find((w) => w.id === col.workflow), col })
         : html`${cell(col, record)}${editedMark(col, record, cell(col, record))}`])
       : Object.keys(record.answers ?? {}).map((k) => {
         const col = { answer: k };
@@ -170,24 +168,11 @@ export const FORMS_TEMPLATES = {
       </div>
     </form>`,
 
-  /**
-   * One card per form: its name (to its view if it has one, else its entries),
-   * how many were sent of how many submitted, and the newest.
-   * data: {forms: [{form, stats}], origin, views}
-   */
-  formsIndex: (ctx, { forms, origin, views = [] }) => html`
+  /** The forms page: one tile per form, the dashboard's own (tiles.js). data: {tiles, origin} */
+  formsIndex: (ctx, { tiles, origin }) => html`
     <h1>Forms</h1>
     <p class="meta">${ctx.copy.formsIntro} <code>${new URL(origin).host}</code></p>
-    <div class="tiles">${forms.map(({ form, stats }) => {
-      const view = views.find((v) => v.form === form.id);
-      return html`
-      <div class="tile">
-        <h3><a href="${view ? `${ctx.base}/views/${view.id}` : `${ctx.base}/${form.id}`}">${form.label}</a></h3>
-        <p class="count">${stats.outcomes.sent?.count ?? 0} sent of ${stats.total} submitted</p>
-        <p><em>newest</em>: ${stats.latest ? ctx.fmtDateTime(stats.latest.timestamp) : "none yet"}</p>
-      </div>`;
-    })}
-    </div>`,
+    <div class="tiles">${tiles.map((tile) => ctx.t.dashboardTile(ctx, { tile }))}</div>`,
 
   /** data: {form, stats, records, outcome, next} */
   formsList: (ctx, { form, stats, records, outcome, next }) => {
