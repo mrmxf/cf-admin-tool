@@ -25,6 +25,12 @@
  *   { label: "Approval", workflow: "wf02", statusText: { 500: "‼️ phone them" } }
  * - display only: the event, and the record page's history, keep the original.
  *
+ * COUNTER, optional: `counter: { label: "#", count: (record) => boolean }` adds a
+ * first column numbering the rows `count` accepts, OLDEST first (by submission),
+ * across every page - so a number never moves when newer rows arrive, and the
+ * newest counted row carries the total. Other rows' cells are blank. Shown on
+ * narrow screens too. Costs one read of the view's whole list per page.
+ *
  * NOTICE, optional: `notice: async ({ env, origin, admin }) => html` is shown
  * above the table - e.g. a warning that a limit is exceeded. A throw is logged
  * and shows nothing.
@@ -73,7 +79,10 @@ export function normaliseViews(list = [], { forms, workflows }) {
     }
     if (v.columns.filter((c) => c.narrow === "fill").length > 1) throw new Error(`${where}: only one column can be narrow: "fill"`);
     if (v.notice !== undefined && typeof v.notice !== "function") throw new Error(`${where}: notice must be a function`);
-    return { id: v.id, label: v.label || v.id, form: v.form, outcome: v.outcome || "sent", columns: v.columns, notice: v.notice };
+    if (v.counter !== undefined && (typeof v.counter?.label !== "string" || !v.counter.label.trim() || typeof v.counter.count !== "function")) {
+      throw new Error(`${where}: counter needs a label and a count(record) function`);
+    }
+    return { id: v.id, label: v.label || v.id, form: v.form, outcome: v.outcome || "sent", columns: v.columns, notice: v.notice, counter: v.counter };
   });
 }
 
@@ -84,6 +93,18 @@ export function normaliseViews(list = [], { forms, workflows }) {
  */
 export function workflowEvent(record, workflowId) {
   return (record.workflow?.events ?? []).filter((x) => isEventOf(x?.event, workflowId)).at(-1) ?? null;
+}
+
+/** uid -> its number: the records `count` accepts, numbered oldest first. Records are newest first. */
+export function counterNumbers(records, count) {
+  const out = new Map();
+  let n = 0;
+  for (const r of [...records].reverse()) {
+    let yes = false;
+    try { yes = Boolean(count(r)); } catch { /* one odd row is not counted */ }
+    if (yes) out.set(r.id, ++n);
+  }
+  return out;
 }
 
 export const ERROR_BADGE = "‼️";

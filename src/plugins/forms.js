@@ -32,13 +32,13 @@
  * production data.
  */
 
-import { formStats, listSubmissions, getSubmission } from "../modules/forms.js";
+import { formStats, listSubmissions, allSubmissions, getSubmission } from "../modules/forms.js";
 import { withEvents, appendEvent, checkEvent } from "../modules/events.js";
 import { cspWithScripts } from "../csp.js";
 import { html, raw } from "../html.js";
 import { dbPing, formHealth } from "../modules/health.js";
 import { normaliseWorkflows, workflowsFor } from "../workflows.js";
-import { normaliseViews } from "../views.js";
+import { normaliseViews, counterNumbers } from "../views.js";
 import { FORMS_TEMPLATES } from "./forms-templates.js";
 
 /**
@@ -174,7 +174,13 @@ export function formsPlugin({ toRecord, list = [], workflows = [], views = [], p
             console.log(`[admin] view ${view.id} notice failed: ${err.stack || err.message}`);
             return "";
           }) : "";
-          return admin.page(view.label, t.dashboardView(c, { view, form, workflows: workflowsFor(wfs, form.id), notice, ...page }), { wide: true });
+          let numbers = null;
+          if (view.counter) {
+            const { records: all } = await allSubmissions(env.FORM_DB, { formId: form.id, origin: url.origin, outcome: view.outcome, toRecord });
+            await withEvents(env.ADMIN_DB, { origin: url.origin, form: form.id, records: all });
+            numbers = counterNumbers(all, view.counter.count);
+          }
+          return admin.page(view.label, t.dashboardView(c, { view, form, workflows: workflowsFor(wfs, form.id), notice, numbers, ...page }), { wide: true });
         }
         if (admin.path === "/") {
           const stats = await allStats(env, url.origin);

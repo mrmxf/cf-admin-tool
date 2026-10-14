@@ -303,6 +303,12 @@ submission page; before it has run, a button named after the
 workflow, disabled while it has no `run()`. A bad view (unknown form or
 workflow, duplicate id, two fills) throws at construction.
 
+A view's optional `counter: { label: "#", count: (record) => boolean }` adds a
+first column numbering the rows `count` accepts, **oldest first, across every
+page**: a number never moves when newer rows arrive, and the newest counted row
+carries the total. Uncounted rows are blank. It shows on narrow screens too, with
+no side padding. It reads the view's whole list for each page.
+
 A view's optional `notice: async ({ env, origin, admin }) => html` is shown
 above its table, e.g. a warning that a limit is exceeded. A throw is logged and
 shows nothing.

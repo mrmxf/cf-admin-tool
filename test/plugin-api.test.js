@@ -205,3 +205,29 @@ test("allSubmissions: every page joined, newest first, up to max", async () => {
   assert.equal(capped.records.length, 70);
   assert.equal(capped.truncated, true);
 });
+
+test("a view's counter: a first column numbering the counted rows oldest first, across pages", async () => {
+  const counted = createAdmin({
+    site: { name: "T", url: "https://site.example", fonts: {}, theme: { dark: THEME } }, requireSecondFactor: false,
+    plugins: [formsPlugin({ toRecord, list: [{ id: "parking", label: "P", path: "/p" }],
+      views: [{ id: "parking", form: "parking", columns: [{ label: "Reg", answer: "reg" }],
+        counter: { label: "#", count: (r) => r.workflow.events.some((e) => e.event === "wf02-approve") } }] })],
+  });
+  const auth = await signIn();
+  // 60 sent rows, oldest first; every third approved: 20 counted, 1..20, the newest #20.
+  for (let i = 1; i <= 60; i++) {
+    const uid = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    insert(uid, "sent", { reg: `R${i}` }, i);
+    if (i % 3 === 0) logEvent(uid, "wf02-approve", 201);
+  }
+  const get = async (q = "") => (await counted.fetch(new Request(`${ORIGIN}/admin/forms/views/parking${q}`, { headers: { cookie: auth } }), env, ctx)).text();
+  const page1 = await get();
+  assert.match(page1, /<thead><tr><th scope="col" class="ctr">#<\/th><th scope="col"><span class="d-full">Submitted/);
+  const cells = (p) => [...p.matchAll(/<td class="ctr">(\d*)<\/td>[\s\S]*?>(R\d+)</g)].map((m) => `${m[2]}:${m[1]}`);
+  assert.deepEqual(cells(page1).slice(0, 4), ["R60:20", "R59:", "R58:", "R57:19"], "newest first; the newest counted row has the total");
+  const next = page1.match(/\?cursor=([^"]+)">Older/)[1];
+  const page2 = cells(await get(`?cursor=${next}`));
+  assert.deepEqual(page2.slice(-3), ["R3:1", "R2:", "R1:"], "page 2 continues: the oldest counted row is 1");
+  assert.throws(() => normaliseViews([{ id: "v", form: "parking", counter: { label: "#" }, columns: [{ label: "R", answer: "r" }] }],
+    { forms: [{ id: "parking" }], workflows: [] }), /counter needs a label and a count/);
+});

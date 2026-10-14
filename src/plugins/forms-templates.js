@@ -54,9 +54,10 @@ export const FORMS_TEMPLATES = {
    * opens the whole row (a popover: no script, the CSP allows none of ours),
    * with the row's workflow badge beside it (views.js rowBadge).
    * `notice` is what the view's notice() returned (html, or "").
-   * data: {view, form, workflows, records, next, notice}
+   * `numbers` (uid -> n) is the view's counter column, when it has one.
+   * data: {view, form, workflows, records, next, notice, numbers}
    */
-  dashboardView: (ctx, { view, form, workflows, records, next, notice = "" }) => {
+  dashboardView: (ctx, { view, form, workflows, records, next, notice = "", numbers = null }) => {
     const at = (r) => `${ctx.base}/${form.id}/${r.id}`;
     const wf = (col) => workflows.find((w) => w.id === col.workflow);
     const badges = workflows.some((w) => w.badge);
@@ -83,9 +84,9 @@ export const FORMS_TEMPLATES = {
     ${notice}
     ${records.length === 0 ? html`<p class="meta">Nothing to show.</p>` : html`
     <div class="scroll"><table class="compact">
-      <thead><tr><th scope="col"><span class="d-full">Submitted</span><span class="d-short">Date</span></th>${view.columns.map((col) => html`<th scope="col" class="${colClass(col)}">${col.label}</th>`)}<th scope="col" class="eye"><span class="sr">View</span></th></tr></thead>
+      <thead><tr>${numbers ? html`<th scope="col" class="ctr">${view.counter.label}</th>` : ""}<th scope="col"><span class="d-full">Submitted</span><span class="d-short">Date</span></th>${view.columns.map((col) => html`<th scope="col" class="${colClass(col)}">${col.label}</th>`)}<th scope="col" class="eye"><span class="sr">View</span></th></tr></thead>
       <tbody>${records.map((r) => html`<tr>
-        <td><a href="${at(r)}"><span class="d-full">${ctx.fmtDateTime(r.timestamp)}</span><span class="d-short">${ctx.fmtDate(r.timestamp)}</span></a></td>
+        ${numbers ? html`<td class="ctr">${numbers.get(r.id) ?? ""}</td>` : ""}<td><a href="${at(r)}"><span class="d-full">${ctx.fmtDateTime(r.timestamp)}</span><span class="d-short">${ctx.fmtDate(r.timestamp)}</span></a></td>
         ${view.columns.map((col) => td(col, r))}
         <td class="eye">${badge(r)}<button type="button" class="eye-btn" popovertarget="rec-${r.id}" aria-label="View the submission of ${ctx.fmtDateTime(r.timestamp)}">${EYE}</button></td>
       </tr>`)}</tbody>
