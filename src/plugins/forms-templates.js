@@ -156,13 +156,17 @@ export const FORMS_TEMPLATES = {
       <input type="hidden" name="decision" value="${decision}">
       <input type="hidden" name="started" value="${started}">
       <label for="markdown">Message (you can customise this markdown)</label>
-      <textarea id="markdown" name="markdown" rows="14">${markdown}</textarea>
+      <textarea id="markdown" name="markdown" rows="14" aria-describedby="markdown-help">${markdown}</textarea>
+      <p class="meta" id="markdown-help">Blank line = new paragraph; line ending in <code>\</code> = line break.
+        <code>**bold**</code> <code>*italic*</code> <code>~~struck~~</code> <code>^sup^</code> <code>~sub~</code>
+        <code>[text](https://...)</code> <code># heading</code> <code>- list</code> <code>1. list</code>
+        <code>&gt; quote</code> <code>---</code> rule. <code>\</code> before a character makes it literal.</p>
       <h3>Preview</h3>
       <p class="meta">The email in light mode. "Update preview" shows your edits; Send sends the text as typed.</p>
       <div class="mail-preview">${raw(preview)}</div>
       ${cc ? html`<p><label><input type="checkbox" name="cc" value="1"${cc.checked ? raw(" checked") : ""}> cc: ${cc.address}</label></p>` : ""}
       <div class="actions">
-        <button type="submit" name="action" value="send">Send</button>
+        ${to ? html`<button type="submit" name="action" value="send">Send</button>` : ""}
         <button type="submit" name="action" value="skip" class="secondary">Don't send</button>
         <button type="submit" name="action" value="preview" class="secondary">Update preview</button>
         <button type="submit" name="action" value="back" class="secondary">Back</button>

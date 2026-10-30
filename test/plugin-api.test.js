@@ -4,7 +4,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { fakeD1, AUTH_MIGRATIONS, EVENTS_MIGRATIONS } from "./d1.js";
 import {
-  createAdmin, formsPlugin, html, readSetting, settingHistory, appendSetting, latestEvents, allSubmissions, sortKey,
+  createAdmin, formsPlugin, html, readSetting, settingHistory, appendSetting, latestEvents, eventLog, appendEvent, checkEvent, allSubmissions, sortKey,
 } from "../index.js";
 import { safeNext } from "../src/plugins/forms.js";
 import { normaliseViews } from "../src/views.js";
@@ -177,6 +177,23 @@ test("settings: append-only per origin and key; the latest wins; history newest 
   await assert.rejects(appendSetting(db, { origin: ORIGIN, key: "k", value: 1, actor: "a" }), /value must be a string/);
   await assert.rejects(appendSetting(db, { origin: ORIGIN, key: "k", value: "1" }), /actor is required/);
   assert.equal(await readSetting(undefined, { origin: ORIGIN, key: "k" }), null, "no database: never set");
+});
+
+test("eventLog and appendEvent: every event of one workflow, oldest first, on one origin and form", async () => {
+  const add = (origin, uid, event, status) => {
+    const e = { event, timestamp: "2026-10-01T10:00:00.000Z", duration: 1, status, statusMessage: "m" };
+    assert.equal(checkEvent(event.split("-")[0], e), null);
+    return appendEvent(env.ADMIN_DB, { origin, form: "parking", uid, actor: "a@example.org", event: e });
+  };
+  await add(ORIGIN, "u1", "wf02-approve", 201);
+  await add(ORIGIN, "u1", "wf02-deny", 400);
+  await add(ORIGIN, "u2", "wf020-x", 200);
+  await add("https://other.example", "u3", "wf02-approve", 201);
+  const log = await eventLog(env.ADMIN_DB, { origin: ORIGIN, form: "parking", workflow: "wf02" });
+  assert.deepEqual(log.map((e) => [e.uid, e.event, e.status]), [["u1", "wf02-approve", 201], ["u1", "wf02-deny", 400]]);
+  assert.ok(!Number.isNaN(Date.parse(log[0].at)));
+  assert.deepEqual(await eventLog(null, { origin: ORIGIN, form: "parking", workflow: "wf02" }), []);
+  await assert.rejects(eventLog(env.ADMIN_DB, { origin: ORIGIN, form: "parking", workflow: "x%" }), /not valid/);
 });
 
 test("latestEvents: the latest event of one workflow per submission, on one origin and form", async () => {

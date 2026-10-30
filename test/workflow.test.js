@@ -5,18 +5,59 @@ import { createAdmin, formsPlugin } from "../index.js";
 import { approvalWorkflow, PREVIEW_SCRIPT } from "../src/approval.js";
 import { sendMail } from "../src/deliver.js";
 import { scriptHash } from "../src/csp.js";
-import { renderMarkdown, fill } from "../src/markdown.js";
+import { renderMarkdown, markdownText, fill } from "../src/markdown.js";
+import { FORMS_TEMPLATES } from "../src/plugins/forms-templates.js";
 import { checkEvent } from "../src/modules/events.js";
 
 // ── Markdown ────────────────────────────────────────────────────────────────
 
 test("markdown: the subset, and nothing typed becomes markup", () => {
   assert.equal(renderMarkdown("# Hi\n\nOne *two* **three** _four_\nnext line\n\n- a\n- b"),
-    "<h1>Hi</h1>\n<p>One <em>two</em> <strong>three</strong> <em>four</em><br>next line</p>\n<ul><li>a</li><li>b</li></ul>");
+    "<h1>Hi</h1>\n<p>One <em>two</em> <strong>three</strong> <em>four</em> next line</p>\n<ul><li>a</li><li>b</li></ul>");
   assert.equal(renderMarkdown("[site](https://x.test/?a=1&b=2)"), '<p><a href="https://x.test/?a=1&amp;b=2">site</a></p>');
   assert.equal(renderMarkdown("[bad](javascript:alert(1))"), "<p>[bad](javascript:alert(1))</p>", "only http, https, mailto");
   assert.equal(renderMarkdown(`<script>alert("x")</script>`), "<p>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;</p>");
   assert.equal(renderMarkdown("x", { p: 'margin:0"><b' }), '<p style="margin:0&quot;&gt;&lt;b">x</p>');
+});
+
+test("markdown: a newline is a space; a blank line, \\ or two spaces is the break", () => {
+  assert.equal(renderMarkdown("one\ntwo\r\n  three\n\nnext"), "<p>one two three</p>\n<p>next</p>");
+  assert.equal(renderMarkdown("one\\\ntwo  \nthree"), "<p>one<br>two<br>three</p>");
+  assert.equal(renderMarkdown("**across\nlines**"), "<p><strong>across lines</strong></p>");
+  assert.equal(renderMarkdown("a\\\\\nb"), "<p>a\\ b</p>", "an escaped backslash is not a break");
+});
+
+test("markdown: blocks need no blank line before them", () => {
+  assert.equal(renderMarkdown("Intro:\n- a\n  more\n- b\n\nEnd"), "<p>Intro:</p>\n<ul><li>a more</li><li>b</li></ul>\n<p>End</p>");
+  assert.equal(renderMarkdown("# T\nbody\n---\n> q1\nq2"), "<h1>T</h1>\n<p>body</p>\n<hr>\n<blockquote>q1 q2</blockquote>");
+  assert.equal(renderMarkdown("1. a\n2. b"), "<ol><li>a</li><li>b</li></ol>");
+  assert.equal(renderMarkdown("3. a"), '<ol start="3"><li>a</li></ol>');
+  assert.equal(renderMarkdown("since\n2026. The next"), "<p>since 2026. The next</p>", "only a 1. interrupts a paragraph");
+  assert.equal(renderMarkdown("since\n1. a"), "<p>since</p>\n<ol><li>a</li></ol>");
+});
+
+test("markdown: the inline extensions, and the styles they carry", () => {
+  assert.equal(renderMarkdown("2^nd^ H~2~O ~~gone~~"), "<p>2<sup>nd</sup> H<sub>2</sub>O <del>gone</del></p>");
+  assert.equal(renderMarkdown("~5 mins to ~10 and 2^3 ^4"), "<p>~5 mins to ~10 and 2^3 ^4</p>", "no spaces inside sup or sub");
+  assert.equal(renderMarkdown("x^2^", { sup: "font-size:.75em" }), '<p>x<sup style="font-size:.75em">2</sup></p>');
+  assert.equal(renderMarkdown("[a](https://x.test/~me/~you/_b_/)"), '<p><a href="https://x.test/~me/~you/_b_/">a</a></p>', "a URL is never read as markup");
+  assert.equal(renderMarkdown(String.raw`[a](https://x.test/\_b)`), '<p><a href="https://x.test/_b">a</a></p>', "a literal inside a URL");
+  assert.equal(renderMarkdown("^<b>^ ~<i>~"), "<p><sup>&lt;b&gt;</sup> <sub>&lt;i&gt;</sub></p>", "still escaped");
+  assert.equal(renderMarkdown("x\uE0000\uE001 [a](https://x.test)"), '<p>x0 <a href="https://x.test">a</a></p>', "typed placeholders cannot reach the stash");
+});
+
+test("markdownText: the plain-text part, line for line, without the markers", () => {
+  assert.equal(markdownText("**Bold** *em* _em_ x^2^ H~2~O ~~old~~"), "Bold em em x2 H2O ~~old~~");
+  assert.equal(markdownText("[Map](https://x.test/m)\n[https://x.test](https://x.test)\n[bad](javascript:x)"),
+    "Map (https://x.test/m)\nhttps://x.test\n[bad](javascript:x)");
+  assert.equal(markdownText("one\\\ntwo  \nJ\\_Smith \\*"), "one\ntwo\nJ_Smith *");
+});
+
+test("fill: every marker in an answer is literal, wherever it lands", () => {
+  for (const answer of ["x^2^", "H~2~O", "~~gone~~", "> quote", "---", "1. first", "- item", "# head"]) {
+    const html = renderMarkdown(fill("{{a}}", { a: answer }));
+    assert.equal(html, `<p>${answer.replace(">", "&gt;")}</p>`, answer);
+  }
 });
 
 test("fill: answers are made literal Markdown; unknown names stay visible", () => {
@@ -157,7 +198,7 @@ test("approve: the submission, then the filled template and its preview, then se
   assert.match(mail, /To: jo@example\.org/);
   assert.match(mail, /Reply-To: parking@site\.example/);
   assert.match(mail, /Subject: Approved: AB12 CDE/);
-  assert.match(mail, /Edited \*\*text\*\*/, "what was typed is what is sent");
+  assert.match(mail, /Edited text/, "the plain-text part: what was typed, without the markers");
 
   const after = await (await call("/admin/forms/views/parking", { cookie: auth })).text();
   assert.match(after, /#wf-wf02">✅ with mail<\/a>/, "the table shows the latest event");
@@ -190,6 +231,17 @@ test("page 2: the cc box (ticked to start, then as sent), and the Update-preview
     form: { step: "respond", decision: "approve", started, action: "send", markdown: "y" } });
   assert.match(logs.findLast((l) => l.includes("DRY RUN workflow email")), /\nCc: \n/, "unticked: no cc");
   assert.equal(events().at(-1).details, "");
+});
+
+test("approval page: the syntax note, and no Send without an address", async () => {
+  const c = { site: { name: "S", url: "https://x.test" } };
+  const page = (to) => String(FORMS_TEMPLATES.approvalRespond(c, { action: "/a", decision: "approve", started: "2026-01-01T00:00:00.000Z", to,
+    subject: "s", markdown: "m", preview: "p" }));
+  assert.match(page("a@x.test"), /value="send">Send<\/button>/);
+  assert.match(page("a@x.test"), /id="markdown-help">[\s\S]*\^sup\^[\s\S]*~sub~/);
+  assert.match(page("a@x.test"), /aria-describedby="markdown-help"/);
+  assert.doesNotMatch(page(""), /value="send"/);
+  assert.match(page(""), /value="skip"/, "Don't send is still offered");
 });
 
 test("sendMail: a cc that does not look right is dropped", async () => {

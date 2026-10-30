@@ -32,7 +32,7 @@
  * page 2 again with the text kept, to try again or not send.
  */
 
-import { fill, escapeMd, renderMarkdown } from "./markdown.js";
+import { fill, escapeMd, renderMarkdown, markdownText } from "./markdown.js";
 import { sendMail } from "./deliver.js";
 
 export const OUTCOMES = {
@@ -63,7 +63,11 @@ const MAIL = {
   styles: {
     p: "margin:0 0 1em", h1: "font-size:24px;line-height:1.25;margin:0 0 .6em",
     h2: "font-size:20px;line-height:1.25;margin:1.2em 0 .5em", h3: "font-size:17px;margin:1.2em 0 .4em",
-    ul: "margin:0 0 1em;padding-left:1.4em", li: "margin:.2em 0", a: "color:#0b57d0",
+    ul: "margin:0 0 1em;padding-left:1.4em", ol: "margin:0 0 1em;padding-left:1.4em", li: "margin:.2em 0", a: "color:#0b57d0",
+    blockquote: "margin:0 0 1em;padding-left:1em;border-left:3px solid #8a8a8a",
+    hr: "border:0;border-top:1px solid #8a8a8a;margin:1.5em 0",
+    // line-height:0 so a raised or lowered character does not push its line apart.
+    sup: "font-size:.75em;line-height:0;vertical-align:super", sub: "font-size:.75em;line-height:0;vertical-align:sub",
   },
 };
 
@@ -134,7 +138,7 @@ export function approvalWorkflow({ id, label, description = "", forms, emailFiel
         const sent = await sendMail({
           env, request, to, subject, cc: ccOn ? ccAddress : "",
           from: env[senderVar], fromName: c.site.name, replyTo: replyToVar ? env[replyToVar] : "",
-          text: markdown, html: mailDocument(mailBody(markdown)), category: id,
+          text: markdownText(markdown), html: mailDocument(mailBody(markdown)), category: id,
         });
         if (!sent.ok) {
           return {

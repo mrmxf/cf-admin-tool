@@ -130,6 +130,8 @@ Exported for plugins that are not formsPlugin - a phone list, a settings page:
 | `listSubmissions(...)` | one page of 50 |
 | `withEvents(ADMIN_DB, {origin, form, records})` | the records made ACTIVE, their logged events added |
 | `latestEvents(ADMIN_DB, {origin, form, workflow})` | Map uid -> the latest event of one workflow, for counting across all submissions in one query |
+| `eventLog(ADMIN_DB, {origin, form, workflow})` | every event of one workflow, oldest first, `[{uid, event, status, at}]`, to replay what happened |
+| `appendEvent(ADMIN_DB, {origin, form, uid, actor, event})`, `checkEvent(id, event)` | for a plugin that creates its own record: `checkEvent` first. Anything acting on an existing record is a workflow, and formsPlugin writes its event |
 | `workflowEvent(record, id)`, `eventText(e)` | a record's latest event of a workflow, and its display text |
 | `readSetting`, `settingHistory`, `appendSetting` | settings, below |
 | `cspWithScripts(sources)` | a CSP allowing exactly these inline scripts, for a plugin page that sets its own |
@@ -413,8 +415,11 @@ approvalWorkflow({ id: "wf02", label: "Approval", forms: ["requests"],
    `details`, and shows step 2 again to retry or not send. The submission page
    always has the workflow's button, so it can be run again.
 
-The Markdown is a small safe subset (`src/markdown.js`): every character is
-HTML-escaped before markup is added, and filled-in answers are made literal, so
+The Markdown is a small safe subset (`src/markdown.js`), listed for the admin
+under the message box. As in CommonMark, a single newline is a space: a blank
+line starts a paragraph, a line ending in `\\` or two spaces is a line break.
+The email's plain-text part is the same text with the markers removed
+(`markdownText`). Every character is HTML-escaped before markup is added, and filled-in answers are made literal, so
 nothing a submitter typed becomes markup. Plain URLs a submitter typed stay in
 the text, and mail clients may make them links: read the preview before Send.
 

@@ -77,6 +77,21 @@ export async function withEvents(db, { origin, form, records }) {
 }
 
 /**
+ * Every logged event of `workflow` for `form` on `origin`, oldest first:
+ * [{uid, event, status, at}], `at` an ISO time. For a consumer that must replay
+ * what happened, not just where it ended up. Logged events only, not a record's own.
+ */
+export async function eventLog(db, { origin, form, workflow }) {
+  if (!/^[a-z0-9-]{1,40}$/.test(String(workflow ?? ""))) throw new Error(`workflow id "${workflow}" is not valid`);
+  if (!db) return [];
+  const { results = [] } = await db.prepare(
+    `SELECT uid, event, status, created_at AS createdAt FROM workflow_events
+     WHERE origin = ? AND form = ? AND (event = ? OR substr(event, 1, ?) = ?) ORDER BY id`,
+  ).bind(origin, form, workflow, workflow.length + 1, `${workflow}-`).all();
+  return results.map(({ createdAt, ...e }) => ({ ...e, at: new Date(createdAt * 1000).toISOString() }));
+}
+
+/**
  * The latest logged event of workflow `workflow` for every submission of `form`
  * on `origin` that has one: Map uid -> {event, status, statusMessage, timestamp}.
  * One SELECT, for counting across all submissions (e.g. how many are approved)
