@@ -130,6 +130,8 @@ Exported for plugins that are not formsPlugin - a phone list, a settings page:
 | `listSubmissions(...)` | one page of 50 |
 | `withEvents(ADMIN_DB, {origin, form, records})` | the records made ACTIVE, their logged events added |
 | `latestEvents(ADMIN_DB, {origin, form, workflow})` | Map uid -> the latest event of one workflow, for counting across all submissions in one query |
+| `sendMail({env, request, from, fromName, to, cc, replyTo, subject, text, html, category, attachments})` | fails closed, `{ok}` or `{ok: false, reason}`. `attachments` are Mailtrap's shape; an inline image is `<img src="cid:...">`. With `mailBody`, `mailDocument`, `PREVIEW_SCRIPT`, `escapeMd` and `markdownHelp`, what a consumer needs for its own email workflow |
+| `getSubmission(FORM_DB, {formId, origin, uid, toRecord})` | one record on this origin, or null |
 | `eventLog(ADMIN_DB, {origin, form, workflow})` | every event of one workflow, oldest first, `[{uid, event, status, at}]`, to replay what happened |
 | `appendEvent(ADMIN_DB, {origin, form, uid, actor, event})`, `checkEvent(id, event)` | for a plugin that creates its own record: `checkEvent` first. Anything acting on an existing record is a workflow, and formsPlugin writes its event |
 | `workflowEvent(record, id)`, `eventText(e)` | a record's latest event of a workflow, and its display text |

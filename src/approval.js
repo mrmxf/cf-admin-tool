@@ -73,7 +73,7 @@ const MAIL = {
 
 /** The email body as HTML (a styled <div>), shared by the email and the preview. */
 export const mailBody = (md) => `<div style="${MAIL.wrap}">${renderMarkdown(md, MAIL.styles)}</div>`;
-const mailDocument = (body) =>
+export const mailDocument = (body) =>
   `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"></head>` +
   `<body style="margin:0;background:#ffffff">${body}</body></html>`;
 

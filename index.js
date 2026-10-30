@@ -15,17 +15,18 @@ export { createAdmin, normaliseRoot, normalisePlugins } from "./src/handler.js";
 export { formsPlugin } from "./src/plugins/forms.js";
 export { html, raw, esc } from "./src/html.js";
 export { DEFAULT_TEMPLATES, DEFAULT_COPY } from "./src/templates.js";
-export { FORMS_TEMPLATES } from "./src/plugins/forms-templates.js";
+export { FORMS_TEMPLATES, markdownHelp } from "./src/plugins/forms-templates.js";
 export { parseUsers } from "./src/auth.js";
-export { approvalWorkflow } from "./src/approval.js";
-export { renderMarkdown, markdownText, fill } from "./src/markdown.js";
+export { approvalWorkflow, mailBody, mailDocument, PREVIEW_SCRIPT } from "./src/approval.js";
+export { sendMail } from "./src/deliver.js";
+export { renderMarkdown, markdownText, fill, escapeMd } from "./src/markdown.js";
 export { dateFormatters } from "./src/dates.js";
 export { FIXED, mergePatch, diffPatch, changes, editable, checkPatch, isObject } from "./src/patch.js";
 export { scriptHash, cspWithScripts } from "./src/csp.js";
 // For a consumer's own plugins. Reads, settings (append-only), and appendEvent
 // for a plugin that creates its own record: checkEvent it first. Anything that
 // acts on an existing record is a workflow, and formsPlugin writes its event.
-export { listSubmissions, allSubmissions } from "./src/modules/forms.js";
+export { listSubmissions, allSubmissions, getSubmission } from "./src/modules/forms.js";
 export { withEvents, latestEvents, eventLog, appendEvent, checkEvent, isEventOf } from "./src/modules/events.js";
 export { readSetting, settingHistory, appendSetting } from "./src/modules/settings.js";
 export { workflowEvent, eventText } from "./src/views.js";

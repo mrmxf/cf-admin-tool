@@ -47,6 +47,12 @@ function workflowButton(ctx, { form, record, workflow: w }) {
     w.implemented ? "" : raw(" disabled")}>${w.label}</button></form>`;
 }
 
+/** What the Markdown can do, for a textarea with aria-describedby="markdown-help". */
+export const markdownHelp = () => html`<p class="meta" id="markdown-help">Blank line = new paragraph; line ending in <code>\\</code> = line break.
+        <code>**bold**</code> <code>*italic*</code> <code>~~struck~~</code> <code>^sup^</code> <code>~sub~</code>
+        <code>[text](https://...)</code> <code># heading</code> <code>- list</code> <code>1. list</code>
+        <code>&gt; quote</code> <code>---</code> rule. <code>\\</code> before a character makes it literal.</p>`;
+
 export const FORMS_TEMPLATES = {
   /**
    * One of config.views: one compact row per submission, the full page width.
@@ -157,10 +163,7 @@ export const FORMS_TEMPLATES = {
       <input type="hidden" name="started" value="${started}">
       <label for="markdown">Message (you can customise this markdown)</label>
       <textarea id="markdown" name="markdown" rows="14" aria-describedby="markdown-help">${markdown}</textarea>
-      <p class="meta" id="markdown-help">Blank line = new paragraph; line ending in <code>\</code> = line break.
-        <code>**bold**</code> <code>*italic*</code> <code>~~struck~~</code> <code>^sup^</code> <code>~sub~</code>
-        <code>[text](https://...)</code> <code># heading</code> <code>- list</code> <code>1. list</code>
-        <code>&gt; quote</code> <code>---</code> rule. <code>\</code> before a character makes it literal.</p>
+      ${markdownHelp()}
       <h3>Preview</h3>
       <p class="meta">The email in light mode. "Update preview" shows your edits; Send sends the text as typed.</p>
       <div class="mail-preview">${raw(preview)}</div>

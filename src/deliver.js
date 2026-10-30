@@ -121,12 +121,16 @@ const EMAIL = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
  * form, so it is checked for shape and stripped of line breaks like everything
  * else that reaches a header. `cc` (optional) is one address, from a var.
  *
+ * ATTACHMENTS (optional) are Mailtrap's own shape, [{filename, type, content: base64,
+ * disposition?: "attachment" | "inline", content_id?}]. An inline image is <img
+ * src="cid:<content_id>"> in the html: most mail clients block a data: URI.
+ *
  * DRY RUN: printed in full on localhost and reported as sent; on any other host
  * nothing is printed and it reports NOT sent.
  *
  * @returns {Promise<{ok: true, dryRun?: true} | {ok: false, reason: string}>}
  */
-export async function sendMail({ env, request, from, fromName, to, cc = "", replyTo, subject, text, html, category }) {
+export async function sendMail({ env, request, from, fromName, to, cc = "", replyTo, subject, text, html, category, attachments = [] }) {
   to = headerSafe(to);
   if (!EMAIL.test(to)) return { ok: false, reason: "the submitter's email address does not look right" };
   const payload = {
@@ -140,13 +144,15 @@ export async function sendMail({ env, request, from, fromName, to, cc = "", repl
   // cc is ours (a var), not the public's; one that does not look right is dropped, not sent.
   if (cc && EMAIL.test(headerSafe(cc))) payload.cc = [{ email: headerSafe(cc) }];
   if (replyTo && EMAIL.test(headerSafe(replyTo))) payload.headers = { "Reply-To": headerSafe(replyTo) };
+  if (attachments.length) payload.attachments = attachments;
   if (env.DRY_RUN === "true") {
     if (!isLocalDev(request, env)) {
       console.log("[admin] DRY RUN on a non-local host: workflow email NOT sent");
       return { ok: false, reason: "dry run on a non-local host" };
     }
     console.log(`[admin] DRY RUN workflow email\nTo: ${to}\nFrom: ${payload.from.name} <${payload.from.email}>\n` +
-      `Cc: ${payload.cc?.[0].email ?? ""}\nReply-To: ${payload.headers?.["Reply-To"] ?? ""}\nSubject: ${payload.subject}\n\n${text}\n`);
+      `Cc: ${payload.cc?.[0].email ?? ""}\nReply-To: ${payload.headers?.["Reply-To"] ?? ""}\nSubject: ${payload.subject}\n` +
+      `Attachments: ${attachments.map((a) => a.filename).join(", ")}\n\n${text}\n`);
     return { ok: true, dryRun: true };
   }
   if (!env.MAILTRAP_API_TOKEN || !payload.from.email) return { ok: false, reason: "mail is not configured" };

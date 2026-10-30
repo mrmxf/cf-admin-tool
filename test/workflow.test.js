@@ -291,3 +291,21 @@ test("the four outcomes, Back, and a failed send logged as 500 with its details"
   assert.match(rec, /run\/wf02"><button class="run" type="submit">Parking approval<\/button>/, "the submission page can run it again");
   assert.match(rec, /☠️ failed<br><span class="meta">send failed: the mail service answered 500<\/span>/, "history shows the details");
 });
+
+// ── sendMail: attachments ───────────────────────────────────────────────────
+
+test("sendMail: attachments reach Mailtrap as given; none means no field; a dry run names them", async () => {
+  const att = { filename: "a.png", type: "image/png", disposition: "inline", content_id: "a", content: "AAAA" };
+  const base = { env: { MAILTRAP_API_TOKEN: "t" }, request: new Request("https://x.test/"), from: "f@x.test", fromName: "F", to: "t@x.test", subject: "s", text: "t", html: "<p>h</p>" };
+  await sendMail({ ...base, attachments: [att] });
+  assert.deepEqual(mailtrap.at(-1).attachments, [att]);
+  await sendMail(base);
+  assert.equal("attachments" in mailtrap.at(-1), false);
+  const dry = await sendMail({ ...base, env: { DRY_RUN: "true" }, request: new Request("http://localhost:8799/"), attachments: [att] });
+  assert.equal(dry.dryRun, true);
+  assert.ok(logs.some((l) => /Attachments: a\.png/.test(l)));
+});
+
+test("markdownHelp: the literal backslash survives the template", () => {
+  assert.match(String(FORMS_TEMPLATES.approvalRespond({}, { action: "/a", decision: "approve", started: "s", to: "", subject: "", markdown: "", preview: "" })), /<code>\\<\/code> = line break/);
+});
