@@ -237,6 +237,7 @@ export function createAdmin(config) {
   const { fmtDate, fmtDateTime } = dateFormatters(config.timeZone || "UTC");
   const configRoot = normaliseRoot(config.root ?? "/admin");
   const secondFactor = config.requireSecondFactor !== false;
+  const codeInSubject = config.codeInSubject === true;
   const liveHost = new URL(config.site.url).host;
   const tileOrder = config.dashboard?.order ?? [];
 
@@ -310,7 +311,7 @@ export function createAdmin(config) {
           deliver ? "" : limited && users.has(String(email).trim().toLowerCase()) ? "a send limit was hit: no code sent" : "no code sent");
         if (deliver) {
           ctx.waitUntil(sendEmailCode({
-            env, site: config.site, request, to: deliver.email, code: deliver.code, minutes: CODE_TTL_S / 60, secondFactor,
+            env, site: config.site, request, to: deliver.email, code: deliver.code, minutes: CODE_TTL_S / 60, secondFactor, codeInSubject,
           }).then((r) => log(attempt, deliver.email, r?.ok ? "code-emailed" : "code-not-sent", r?.ok ? (r.dryRun ? "dry run" : "") : r?.reason))
             .catch((err) => {
               console.log(`[admin] email code failed: ${err.message}`);

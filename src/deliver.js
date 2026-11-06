@@ -27,7 +27,15 @@ export function isLocalDev(request, env) {
 /** Strip anything that would end a header line. Config values, but still. */
 const headerSafe = (s) => String(s ?? "").replace(/[\r\n]+/g, " ").trim();
 
-export async function sendEmailCode({ env, site, request, to, code, minutes, secondFactor = true }) {
+/**
+ * The subject. With config.codeInSubject the code leads it ("123456 is your Site
+ * code"), so a phone or desktop notification shows it without opening the mail.
+ * That puts the code on a lock screen and in notification history: opt in only.
+ */
+export const codeSubject = (site, code, codeInSubject = false) =>
+  headerSafe(codeInSubject ? `${code} is your ${site.name} code` : `${site.name} admin login code`);
+
+export async function sendEmailCode({ env, site, request, to, code, minutes, secondFactor = true, codeInSubject = false }) {
   if (env.DRY_RUN === "true") {
     if (isLocalDev(request, env)) {
       console.log(`[admin] DRY RUN email code for ${to}: ${code}`);
@@ -47,7 +55,7 @@ export async function sendEmailCode({ env, site, request, to, code, minutes, sec
     body: JSON.stringify({
       from: { email: env.ADMIN_SENDER, name: headerSafe(`${site.name} admin`) },
       to: [{ email: to }],
-      subject: headerSafe(`${site.name} admin login code`),
+      subject: codeSubject(site, code, codeInSubject),
       category: "admin-login",
       text:
         `Your ${site.name} admin login code is:\n\n    ${code}\n\n` +

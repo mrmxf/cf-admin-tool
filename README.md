@@ -23,6 +23,7 @@ export default createAdmin({
   site: SITE,                                   // name, url, lang, fonts, theme (11 tokens)
   timeZone: "Europe/London",                    // how times are shown
   requireSecondFactor: true,                    // the push code after the emailed one
+  codeInSubject: false,                         // true: subject "123456 is your <name> code"
   copy: { dashboardIntro: "...", healthTile: "Health" },  // any key of DEFAULT_COPY
   dashboard: { order: ["admin-health"] },       // optional: tile ids first; the rest alphabetical
   templates: { header: (ctx) => html`...` },    // any template, core or plugin, by name
@@ -185,6 +186,11 @@ the default.
    no push is sent and `ntfyTopic` is optional. Every line of the second factor
    sits inside an `if (secondFactor) {}` block (auth.js `verifyCode`,
    handler.js), so a different channel replaces only those.
+
+   The email's subject is "<name> admin login code". `codeInSubject: true`
+   makes it "123456 is your <name> code", so a phone or desktop notification
+   shows the code without opening the mail. The cost: the code is then on the
+   lock screen and in notification history. Opt in only.
 4. A session: 18 hours at most, 3 hours idle (vars `ADMIN_SESSION_TTL_S`,
    `ADMIN_SESSION_IDLE_S` override). `__Host-` cookies, HttpOnly, Secure,
    SameSite=Strict. Taking someone off `ADMIN_USERS` ends their session at the
