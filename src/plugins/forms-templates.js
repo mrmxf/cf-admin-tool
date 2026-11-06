@@ -6,7 +6,7 @@
  */
 
 import { html, raw } from "../html.js";
-import { cell, clip, workflowEvent, eventText, rowBadge } from "../views.js";
+import { cell, clip, columnText, workflowEvent, eventText, rowBadge } from "../views.js";
 
 const EYE = raw(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
   stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/>
@@ -16,13 +16,16 @@ const EYE = raw(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const colClass = (col) => (col.narrow === "fill" ? "fill" : col.narrow ? "n" : "w");
 
 /**
- * A workflow's cell: its latest statusMessage (or the column's statusText for
- * that status) linked to it, else a button to start it.
+ * A workflow's cell: the column's text() if it says anything, else its latest
+ * statusMessage (or the column's statusText for that status), linked to it; with
+ * no event, text() as plain text, else a button to start it.
  */
 function workflowCell(ctx, { form, record, workflow: w, col }) {
   const at = `${ctx.base}/${form.id}/${record.id}`;
   const e = workflowEvent(record, w.id);
-  if (e) return html`<a href="${at}#wf-${w.id}">${col?.statusText?.[e.status] ?? eventText(e)}</a>`;
+  const own = columnText(col, e, record, ctx);
+  if (e) return html`<a href="${at}#wf-${w.id}">${own || (col?.statusText?.[e.status] ?? eventText(e))}</a>`;
+  if (own) return own;
   return workflowButton(ctx, { form, record, workflow: w });
 }
 
@@ -52,6 +55,30 @@ export const markdownHelp = () => html`<p class="meta" id="markdown-help">Blank 
         <code>**bold**</code> <code>*italic*</code> <code>~~struck~~</code> <code>^sup^</code> <code>~sub~</code>
         <code>[text](https://...)</code> <code># heading</code> <code>- list</code> <code>1. list</code>
         <code>&gt; quote</code> <code>---</code> rule. <code>\\</code> before a character makes it literal.</p>`;
+
+/**
+ * A Markdown message as a toggle, no script: the PREVIEW (the text in a hidden
+ * field, the rendered email, an Edit button) or the EDITOR (the textarea, the
+ * help, and only a Preview button). Each button posts the form, action=edit or
+ * action=preview, so the server re-renders the other side: `markdownMode(fields)`
+ * says which. The caller adds its own action buttons after the preview only.
+ * Inside a <form>. data: {mode, markdown, preview (trusted html), label, note, rows}
+ */
+export const markdownPane = ({ mode = "preview", markdown = "", preview = "", label = "Message (you can customise this markdown)", note = "", rows = 14 }) =>
+  mode === "edit" ? html`
+      <label for="markdown">${label}</label>
+      <textarea id="markdown" name="markdown" rows="${rows}" aria-describedby="markdown-help">${markdown}</textarea>
+      ${markdownHelp()}
+      <div class="actions"><button type="submit" name="action" value="preview">Preview</button></div>`
+  : html`
+      <input type="hidden" name="markdown" value="${markdown}">
+      <h3>Preview</h3>
+      ${note ? html`<p class="meta">${note}</p>` : ""}
+      <div class="mail-preview">${raw(preview)}</div>
+      <div class="actions"><button type="submit" name="action" value="edit" class="secondary">Edit</button></div>`;
+
+/** Which side of markdownPane a POST asks for: "edit" only after its Edit button. */
+export const markdownMode = (fields) => (fields?.get?.("action") === "edit" ? "edit" : "preview");
 
 export const FORMS_TEMPLATES = {
   /**
@@ -148,8 +175,12 @@ export const FORMS_TEMPLATES = {
       </div>
     </form>`,
 
-  /** approvalWorkflow, page 2. data: {action, decision, started, to, subject, markdown, preview, cc: null | {address, checked}, error} */
-  approvalRespond: (ctx, { action, decision, started, to, subject, markdown, preview, cc = null, error = "" }) => html`
+  /**
+   * approvalWorkflow, page 2: the preview (with the cc box and the actions) or the
+   * editor (only Preview) - markdownPane. In the editor the cc box rides hidden.
+   * data: {action, decision, started, to, subject, markdown, preview, mode, cc: null | {address, checked}, error}
+   */
+  approvalRespond: (ctx, { action, decision, started, to, subject, markdown, preview, mode = "preview", cc = null, error = "" }) => html`
     <h2>Send response to submitter</h2>
     ${error ? html`<p class="error" role="alert">${error}</p>` : ""}
     <dl class="pairs">
@@ -161,19 +192,14 @@ export const FORMS_TEMPLATES = {
       <input type="hidden" name="step" value="respond">
       <input type="hidden" name="decision" value="${decision}">
       <input type="hidden" name="started" value="${started}">
-      <label for="markdown">Message (you can customise this markdown)</label>
-      <textarea id="markdown" name="markdown" rows="14" aria-describedby="markdown-help">${markdown}</textarea>
-      ${markdownHelp()}
-      <h3>Preview</h3>
-      <p class="meta">The email in light mode. "Update preview" shows your edits; Send sends the text as typed.</p>
-      <div class="mail-preview">${raw(preview)}</div>
+      ${markdownPane({ mode, markdown, preview, note: "The email in light mode, exactly as it will be sent." })}
+      ${mode === "edit" ? (cc?.checked ? html`<input type="hidden" name="cc" value="1">` : "") : html`
       ${cc ? html`<p><label><input type="checkbox" name="cc" value="1"${cc.checked ? raw(" checked") : ""}> cc: ${cc.address}</label></p>` : ""}
       <div class="actions">
         ${to ? html`<button type="submit" name="action" value="send">Send</button>` : ""}
         <button type="submit" name="action" value="skip" class="secondary">Don't send</button>
-        <button type="submit" name="action" value="preview" class="secondary">Update preview</button>
         <button type="submit" name="action" value="back" class="secondary">Back</button>
-      </div>
+      </div>`}
     </form>`,
 
   /** The forms page: one tile per form, the dashboard's own (tiles.js). data: {tiles, origin} */

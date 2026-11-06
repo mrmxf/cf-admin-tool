@@ -24,6 +24,13 @@
  * status to what the cell shows instead of the event's statusMessage, e.g.
  *   { label: "Approval", workflow: "wf02", statusText: { 500: "‼️ phone them" } }
  * - display only: the event, and the record page's history, keep the original.
+ * For more than a status can say, `text: (event, record, { fmtDate }) => string`
+ * is asked first, for EVERY row - `event` is null where the workflow has not run.
+ * A non-empty string is the cell: linked to the record's history when there is
+ * an event, plain text (no button) when there is not. "" (or a throw) leaves the
+ * cell as it would be without it. `fmtDate` is the admin's, in config.timeZone.
+ *   { label: "Permit", workflow: "wf03",
+ *     text: (e, r, { fmtDate }) => e ? `🅿️ ${fmtDate(e.timestamp)}` : (approved(r) ? "" : "🚫") }
  *
  * COUNTER, optional: `counter: { label: "#", count: (record) => boolean }` adds a
  * first column numbering the rows `count` accepts, OLDEST first (by submission),
@@ -70,6 +77,9 @@ export function normaliseViews(list = [], { forms, workflows }) {
             || e.some(([k, v]) => !/^[1-5]\d\d$/.test(k) || typeof v !== "string" || !v.trim() || v.length > 120)) {
           throw new Error(`${where}: column "${c.label}" statusText must map HTTP statuses to short text, on a workflow column`);
         }
+      }
+      if (c.text !== undefined && (c.workflow === undefined || typeof c.text !== "function")) {
+        throw new Error(`${where}: column "${c.label}" text must be a function, on a workflow column`);
       }
       if (c.workflow !== undefined) {
         const w = workflows.find((x) => x.id === c.workflow);
@@ -128,6 +138,14 @@ export function rowBadge(record, workflows) {
     if (emoji && (!best || w.badgeRank > best.rank)) best = { emoji, rank: w.badgeRank, title: `${w.label}: ${eventText(e)}` };
   }
   return best && { emoji: best.emoji, title: best.title };
+}
+
+/** A workflow column's own text for a record (its `text`), or "" for the default cell. */
+export function columnText(column, event, record, ctx = {}) {
+  if (typeof column?.text !== "function") return "";
+  try {
+    return String(column.text(event, record, { fmtDate: ctx.fmtDate ?? ((iso) => String(iso ?? "").slice(0, 10)) }) ?? "").trim().slice(0, CAP - 1);
+  } catch { return ""; }   // one odd old row must not take the whole table down
 }
 
 /** What a view shows for a workflow's event: its statusMessage, else its status. */

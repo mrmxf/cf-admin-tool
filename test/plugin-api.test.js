@@ -38,7 +38,11 @@ const admin = createAdmin({
     views: [{
       id: "parking", label: "Parking", form: "parking",
       notice: async ({ origin }) => html`<p class="error" id="over">over the limit on <b>${origin}</b></p>`,
-      columns: [{ label: "Reg", answer: "reg" }, { label: "Night", workflow: "wf06", statusText: { 200: "🚗 <in>" } }],
+      columns: [{ label: "Reg", answer: "reg" }, { label: "Night", workflow: "wf06", statusText: { 200: "🚗 <in>" } },
+        { label: "Own", workflow: "wf06", text: (e, r, { fmtDate }) => {
+          if (r.answers.reg === "BOOM") throw new Error("odd row");
+          return e ? `<${r.answers.reg}> ${fmtDate(e.timestamp)}` : (r.answers.reg === "R3" ? "🚫" : "");
+        } }],
     }],
   })],
 });
@@ -132,6 +136,26 @@ test("a view's notice is shown above the table, and statusText replaces a status
   bad({ label: "N", workflow: "wf06", statusText: {} }, /statusText/);
   assert.throws(() => normaliseViews([{ id: "v", form: "parking", notice: "x", columns: [{ label: "R", answer: "r" }] }],
     { forms: [{ id: "parking" }], workflows: [] }), /notice must be a function/);
+});
+
+test("a workflow column's text(): linked with an event, plain without, the default when empty or thrown", async () => {
+  const auth = await signIn();
+  insert(UID, "sent", { reg: "R1" });
+  logEvent(UID, "wf06-parked", 200);
+  insert(UID.slice(0, -1) + "5", "sent", { reg: "R2" });
+  insert(UID.slice(0, -1) + "6", "sent", { reg: "R3" });
+  insert(UID.slice(0, -1) + "7", "sent", { reg: "BOOM" });
+  const view = await (await call("/admin/forms/views/parking", { cookie: auth })).text();
+  assert.match(view, /#wf-wf06">&lt;R1&gt; \d{4}-\d\d-\d\d<\/a>/, "the event's own text, linked and escaped, with the admin's date");
+  assert.match(view, /<td class="w">🚫<\/td>/, "no event: plain text, no button");
+  const row = (reg) => view.slice(view.indexOf(`>${reg}<`), view.indexOf("</tr>", view.indexOf(`>${reg}<`)));
+  assert.equal((row("R2").match(/run\/wf06/g) ?? []).length, 2, "\"\" keeps the button");
+  assert.equal((row("BOOM").match(/run\/wf06/g) ?? []).length, 2, "a throw keeps the button");
+
+  const bad = (col) => assert.throws(() => normaliseViews([{ id: "v", form: "parking", columns: [col] }],
+    { forms: [{ id: "parking" }], workflows: [{ id: "wf06", forms: null }] }), /text must be a function/);
+  bad({ label: "N", answer: "reg", text: () => "x" });
+  bad({ label: "N", workflow: "wf06", text: "x" });
 });
 
 test("a notice that throws shows nothing and is logged", async () => {

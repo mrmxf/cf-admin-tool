@@ -18,15 +18,17 @@
  *
  * Pages, each "WORKFLOW: <label>":
  *   GET          the submission, [Approve] [Deny]            (the start time is set here)
- *   POST decide  the response: Markdown, a light-mode preview,
+ *   POST decide  the response as a light-mode preview, then [Edit],
  *                [x] cc: <ccVar's address>     (only with ccVar set; checked to start)
- *                [Send] [Don't send] [Update preview] [Back]
- *                "Update preview" is disabled until the text is edited (a script,
- *                by hash; without it the button simply stays enabled).
+ *                [Send] [Don't send] [Back]
+ *                Edit swaps the preview for the Markdown, with only [Preview]
+ *                (markdownPane in plugins/forms-templates.js; no script).
  *   POST respond send    -> email, then the event   201 "✅ with mail" / 400 "❌ with mail"
  *                skip    -> the event, no email     202 "✅ silent"    / 422 "❌ silent"
+ *                edit    -> page 2 again, the editor; nothing recorded
  *                preview -> page 2 again, previewing the text as typed; nothing recorded
  *                back    -> page 1 again (same start time); nothing recorded
+ *                anything else -> the preview again; nothing recorded
  * A send with the cc box ticked records "cc: <address>" in the event's `details`.
  * A failed send logs 500 "☠️ failed" with the reason in `details`, and shows
  * page 2 again with the text kept, to try again or not send.
@@ -42,8 +44,9 @@ export const OUTCOMES = {
 export const FAILED = [500, "☠️ failed"];
 export const APPROVAL_BADGE = { 201: "✅", 202: "✅", 400: "❌", 422: "❌" };
 
-// Page 2: "Update preview" waits for an edit, so an edit asks for a preview.
-// Rendered enabled; this disables it, so with no script it still works.
+// DEPRECATED (0.7.0): page 2 is a preview/edit toggle (markdownPane) and runs no
+// script. Kept for consumers that still send it: with no "Update preview" button
+// on the page it does nothing.
 export const PREVIEW_SCRIPT = `(() => {
   const ta = document.getElementById("markdown");
   const btn = document.querySelector('button[name="action"][value="preview"]');
@@ -110,11 +113,10 @@ export function approvalWorkflow({ id, label, description = "", forms, emailFiel
       // The box starts ticked; after that it is whatever was sent back.
       const firstShow = fields.get("step") !== "respond";
       const ccOn = Boolean(ccAddress) && (firstShow || fields.get("cc") === "1");
-      const respond = (markdown, error = "") => ({
+      const respond = (markdown, error = "", mode = "preview") => ({
         status: error ? 502 : 200,
-        scripts: [PREVIEW_SCRIPT],
         body: c.t.approvalRespond(c, {
-          action, decision, started: started.toISOString(), to, subject, markdown, error,
+          action, decision, started: started.toISOString(), to, subject, markdown, error, mode,
           cc: ccAddress ? { address: ccAddress, checked: ccOn } : null,
           preview: mailBody(markdown),
         }),
@@ -125,8 +127,10 @@ export function approvalWorkflow({ id, label, description = "", forms, emailFiel
       const choice = fields.get("action");
       if (choice === "back") return { body: c.t.approvalStart(c, { action, details, started: started.toISOString() }) };
       const markdown = String(fields.get("markdown") ?? "").slice(0, 20000);
-      if (choice === "preview") return respond(markdown);
-      const how = choice === "send" ? "send" : "skip";
+      if (choice === "edit") return respond(markdown, "", "edit");
+      // Only the two buttons that mean it record anything.
+      if (choice !== "send" && choice !== "skip") return respond(markdown);
+      const how = choice;
       const event = (status, statusMessage, extra = {}) => ({
         event: `${id}-${decision}`,
         timestamp: started.toISOString(),

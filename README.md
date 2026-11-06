@@ -130,7 +130,7 @@ Exported for plugins that are not formsPlugin - a phone list, a settings page:
 | `listSubmissions(...)` | one page of 50 |
 | `withEvents(ADMIN_DB, {origin, form, records})` | the records made ACTIVE, their logged events added |
 | `latestEvents(ADMIN_DB, {origin, form, workflow})` | Map uid -> the latest event of one workflow, for counting across all submissions in one query |
-| `sendMail({env, request, from, fromName, to, cc, replyTo, subject, text, html, category, attachments})` | fails closed, `{ok}` or `{ok: false, reason}`. `attachments` are Mailtrap's shape; an inline image is `<img src="cid:...">`. With `mailBody`, `mailDocument`, `PREVIEW_SCRIPT`, `escapeMd` and `markdownHelp`, what a consumer needs for its own email workflow |
+| `sendMail({env, request, from, fromName, to, cc, replyTo, subject, text, html, category, attachments})` | fails closed, `{ok}` or `{ok: false, reason}`. `attachments` are Mailtrap's shape; an inline image is `<img src="cid:...">`. With `mailBody`, `mailDocument`, `escapeMd`, `markdownHelp`, `markdownPane` and `markdownMode` (`PREVIEW_SCRIPT` is deprecated), what a consumer needs for its own email workflow |
 | `getSubmission(FORM_DB, {formId, origin, uid, toRecord})` | one record on this origin, or null |
 | `eventLog(ADMIN_DB, {origin, form, workflow})` | every event of one workflow, oldest first, `[{uid, event, status, at}]`, to replay what happened |
 | `appendEvent(ADMIN_DB, {origin, form, uid, actor, event})`, `checkEvent(id, event)` | for a plugin that creates its own record: `checkEvent` first. Anything acting on an existing record is a workflow, and formsPlugin writes its event |
@@ -304,7 +304,11 @@ A `workflow` cell is the workflow's latest event, its `statusMessage` (or the
 column's `statusText` for that status, e.g. `statusText: { 500: "‼️ phone them" }` -
 display only, the history keeps what was logged) linked to the workflow on the
 submission page; before it has run, a button named after the
-workflow, disabled while it has no `run()`. A bad view (unknown form or
+workflow, disabled while it has no `run()`. For more than a status can say,
+`text: (event, record, { fmtDate }) => string` is asked first, for every row
+(`event` null before the workflow has run): a non-empty string is the cell,
+linked when there is an event and plain text - no button - when there is not;
+`""` or a throw leaves the default. A bad view (unknown form or
 workflow, duplicate id, two fills) throws at construction.
 
 A view's optional `counter: { label: "#", count: (record) => boolean }` adds a
@@ -405,13 +409,15 @@ approvalWorkflow({ id: "wf02", label: "Approval", forms: ["requests"],
 1. The submission, **Approve** / **Deny**. The start time is set here.
 2. "Send response to submitter": the Markdown template, `{{field}}` already
    filled from the answers (plus `{{site_name}}`, `{{site_url}}`,
-   `{{submitted_date}}`), editable, with a light-mode preview of the email.
+   `{{submitted_date}}`), shown first as a light-mode preview of the email with
+   **Edit** below it. Edit swaps the preview for the Markdown, whose only button
+   is **Preview** (back to the preview; nothing logged; no script - each side is
+   a POST, `markdownPane` / `markdownMode`, exported for a consumer's own pages).
    With `ccVar` set (an env var holding one address), a **cc: <address>**
    checkbox above the buttons, ticked to start; a send with it ticked has
    `details` "cc: <address>".
-   **Send** / **Don't send** / **Update preview** (shows the edits; nothing
-   logged; disabled until the text is edited, by a script allowed by its hash)
-   / **Back** (to step 1; nothing logged).
+   **Send** / **Don't send** / **Back** (to step 1; nothing logged), on the
+   preview only. Any other action shows the preview again and logs nothing.
 3. The event: `201 "✅ with mail"`, `202 "✅ silent"`, `400 "❌ with mail"`,
    `422 "❌ silent"`. A send that fails logs `500 "☠️ failed"` with the reason in
    `details`, and shows step 2 again to retry or not send. The submission page

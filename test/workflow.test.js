@@ -174,17 +174,33 @@ test("approve: the submission, then the filled template and its preview, then se
   assert.match(respond, /Send response to submitter/);
   assert.match(respond, /<dd>jo@example\.org<\/dd>/);
   assert.match(respond, /<dd>Approved: AB12 CDE<\/dd>/);
-  assert.match(respond, /Dear Jo &lt;b&gt;Bloggs&lt;\/b&gt;,\n\nYour car \*\*AB12 CDE\*\* is approved for Test Site\.<\/textarea>/,
-    "filled before it is shown; escaped in the textarea");
+  assert.match(respond, /name="markdown" value="Dear Jo &lt;b&gt;Bloggs&lt;\/b&gt;,\n\nYour car \*\*AB12 CDE\*\* is approved for Test Site\.">/,
+    "filled before it is shown; escaped in the hidden field");
+  assert.doesNotMatch(respond, /<textarea/, "the preview first: no editor");
   assert.match(respond, /<strong>AB12 CDE<\/strong>/, "the preview is rendered");
   assert.doesNotMatch(respond, /<b>Bloggs/, "an answer never becomes markup");
-  assert.match(respond, /value="send">Send<\/button>[\s\S]*value="skip" class="secondary">Don't send<\/button>[\s\S]*value="preview" class="secondary">Update preview<\/button>[\s\S]*value="back" class="secondary">Back<\/button>/);
+  assert.match(respond, /mail-preview[\s\S]*value="edit" class="secondary">Edit<\/button>[\s\S]*value="send">Send<\/button>[\s\S]*value="skip" class="secondary">Don't send<\/button>[\s\S]*value="back" class="secondary">Back<\/button>/,
+    "the preview, Edit below it, then the actions");
+  assert.doesNotMatch(respond, /value="preview"/);
+
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "edit", markdown: "Now *edited* <i>x</i>" } });
+  const editing = await res.text();
+  assert.match(editing, />Now \*edited\* &lt;i&gt;x&lt;\/i&gt;<\/textarea>/, "Edit: the text in the editor");
+  assert.match(editing, /id="markdown-help"/);
+  assert.match(editing, /value="preview">Preview<\/button>/);
+  assert.doesNotMatch(editing, /value="(send|skip|back|edit)"|class="mail-preview"/, "only Preview in the editor");
 
   res = await call(RUN, { method: "POST", cookie: auth,
     form: { step: "respond", decision: "approve", started, action: "preview", markdown: "Now *edited* <i>x</i>" } });
   const previewed = await res.text();
   assert.match(previewed, /<em>edited<\/em> &lt;i&gt;x&lt;\/i&gt;/, "the preview shows the text as typed");
-  assert.match(previewed, />Now \*edited\* &lt;i&gt;x&lt;\/i&gt;<\/textarea>/, "and the text is kept");
+  assert.match(previewed, /name="markdown" value="Now \*edited\* &lt;i&gt;x&lt;\/i&gt;">/, "and the text is kept");
+  assert.match(previewed, /value="send">Send<\/button>/, "with the actions back");
+
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "nonsense", markdown: "x" } });
+  assert.equal(res.status, 200, "an unknown action records nothing");
   assert.equal(events().length, 0, "nothing recorded yet");
 
   res = await call(RUN, { method: "POST", cookie: auth,
@@ -206,16 +222,23 @@ test("approve: the submission, then the filled template and its preview, then se
     "approvalWorkflow's default badge, beside the eye");
 });
 
-test("page 2: the cc box (ticked to start, then as sent), and the Update-preview script by hash", async () => {
+test("page 2: the cc box (ticked to start, then as sent, kept through the editor), and no script", async () => {
   const auth = await signIn();
   const started = new Date().toISOString();
   let res = await call(RUN, { method: "POST", cookie: auth, form: { step: "decide", decision: "approve", started } });
   const page = await res.text();
-  assert.match(page, /<label for="markdown">Message \(you can customise this markdown\)<\/label>/);
   assert.match(page, /<input type="checkbox" name="cc" value="1" checked> cc: parking@site\.example<\/label>[\s\S]*value="send">Send/,
     "ticked to start, above the buttons");
-  assert.ok(page.includes(`<script>${PREVIEW_SCRIPT}</script>`), "the script is inlined");
-  assert.ok(res.headers.get("content-security-policy").includes(await scriptHash(PREVIEW_SCRIPT)), "and allowed by its hash");
+  assert.doesNotMatch(page, /<script>/, "the toggle needs no script");
+
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "edit", markdown: "x", cc: "1" } });
+  const editing = await res.text();
+  assert.match(editing, /<label for="markdown">Message \(you can customise this markdown\)<\/label>/);
+  assert.match(editing, /<input type="hidden" name="cc" value="1">/, "ticked rides hidden through the editor");
+  res = await call(RUN, { method: "POST", cookie: auth,
+    form: { step: "respond", decision: "approve", started, action: "edit", markdown: "x" } });
+  assert.doesNotMatch(await res.text(), /name="cc"/, "unticked: nothing to carry");
 
   res = await call(RUN, { method: "POST", cookie: auth,
     form: { step: "respond", decision: "approve", started, action: "preview", markdown: "x" } });
@@ -235,11 +258,11 @@ test("page 2: the cc box (ticked to start, then as sent), and the Update-preview
 
 test("approval page: the syntax note, and no Send without an address", async () => {
   const c = { site: { name: "S", url: "https://x.test" } };
-  const page = (to) => String(FORMS_TEMPLATES.approvalRespond(c, { action: "/a", decision: "approve", started: "2026-01-01T00:00:00.000Z", to,
-    subject: "s", markdown: "m", preview: "p" }));
+  const page = (to, mode) => String(FORMS_TEMPLATES.approvalRespond(c, { action: "/a", decision: "approve", started: "2026-01-01T00:00:00.000Z", to,
+    subject: "s", markdown: "m", preview: "p", mode }));
   assert.match(page("a@x.test"), /value="send">Send<\/button>/);
-  assert.match(page("a@x.test"), /id="markdown-help">[\s\S]*\^sup\^[\s\S]*~sub~/);
-  assert.match(page("a@x.test"), /aria-describedby="markdown-help"/);
+  assert.match(page("a@x.test", "edit"), /id="markdown-help">[\s\S]*\^sup\^[\s\S]*~sub~/);
+  assert.match(page("a@x.test", "edit"), /aria-describedby="markdown-help"/);
   assert.doesNotMatch(page(""), /value="send"/);
   assert.match(page(""), /value="skip"/, "Don't send is still offered");
 });
@@ -307,5 +330,5 @@ test("sendMail: attachments reach Mailtrap as given; none means no field; a dry 
 });
 
 test("markdownHelp: the literal backslash survives the template", () => {
-  assert.match(String(FORMS_TEMPLATES.approvalRespond({}, { action: "/a", decision: "approve", started: "s", to: "", subject: "", markdown: "", preview: "" })), /<code>\\<\/code> = line break/);
+  assert.match(String(FORMS_TEMPLATES.approvalRespond({}, { action: "/a", decision: "approve", started: "s", to: "", subject: "", markdown: "", preview: "", mode: "edit" })), /<code>\\<\/code> = line break/);
 });
