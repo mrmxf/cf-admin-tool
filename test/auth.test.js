@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fakeD1, AUTH_MIGRATIONS } from "./d1.js";
+import { fakeD1, AUTH_MIGRATIONS, LOGINS_MIGRATION } from "./d1.js";
 import {
   parseUsers, sessionLimits, startLogin, verifyCode, resendNtfyCode, getSession, endSession, challengeStage, NTFY_RESENDS,
   MAX_ATTEMPTS, CODE_TTL_S, NTFY_TTL_S, SESSION_IDLE_S, SESSION_TTL_S, SEND_LIMIT, SEND_WINDOW_S,
@@ -8,7 +8,9 @@ import {
 } from "../src/auth.js";
 
 const USERS = JSON.stringify([{ email: "Staff@Example.org", ntfyTopic: "secret-topic-123" }]);
-const setup = () => ({ db: fakeD1(AUTH_MIGRATIONS), users: parseUsers(USERS).users });
+// What the visitor-facing flow decides on; email/why are for the sign-in log.
+const core = ({ email, why, ...r }) => r;
+const setup = () => ({ db: fakeD1(AUTH_MIGRATIONS, LOGINS_MIGRATION), users: parseUsers(USERS).users });
 const T = 1_800_000_000;
 
 /** Right code for whatever stage `c` is at, or a guaranteed wrong one. */
@@ -59,7 +61,7 @@ test("an address not on the list gets a challenge but no code, and can never ver
   assert.equal(await challengeStage({ db: env.db, challengeId: s.challengeId, now: T }), "email");
   for (let i = 1; i < MAX_ATTEMPTS; i++) {
     const r = await verifyCode({ ...env, challengeId: s.challengeId, code: "000000", now: T });
-    assert.deepEqual(r, { ok: false, reason: "wrong-code", attemptsLeft: MAX_ATTEMPTS - i });
+    assert.deepEqual(core(r), { ok: false, reason: "wrong-code", attemptsLeft: MAX_ATTEMPTS - i });
   }
   assert.equal((await verifyCode({ ...env, challengeId: s.challengeId, code: "000000", now: T })).reason, "burned");
 });
@@ -183,11 +185,11 @@ test("second factor OFF: the emailed code alone gives a session", async () => {
 });
 
 test("second factor ON: a user with no topic cannot get past the email step", async () => {
-  const db = fakeD1(AUTH_MIGRATIONS);
+  const db = fakeD1(AUTH_MIGRATIONS, LOGINS_MIGRATION);
   const users = parseUsers('[{"email":"notopic@example.org"}]').users;
   const s = await startLogin({ db, users, email: "notopic@example.org", now: T });
   const r = await verifyCode({ db, users, challengeId: s.challengeId, code: s.deliver.code, now: T });
-  assert.deepEqual(r, { ok: false, reason: "burned" });
+  assert.deepEqual(core(r), { ok: false, reason: "burned" });
 });
 
 test("the same rate-limit work for every address, keyed by hash: the table never holds an address", async () => {
@@ -243,7 +245,7 @@ test("FAIL_DAILY_LIMIT wrong codes lock the address for the day - even the right
   }
   const late = await startLogin({ ...env2, email: "staff@example.org", now: t + 1 });
   const r = await verifyCode({ ...env2, challengeId: late.challengeId, code: late.deliver?.code ?? "000000", now: t + 1 });
-  assert.deepEqual(r, { ok: false, reason: "burned" }, "the right code is refused once the budget is spent");
+  assert.deepEqual(core(r), { ok: false, reason: "burned" }, "the right code is refused once the budget is spent");
   const next = await startLogin({ ...env2, email: "staff@example.org", now: t + DAY_S + 1 });
   assert.equal((await verifyCode({ ...env2, challengeId: next.challengeId, code: next.deliver.code, now: t + DAY_S + 1 })).ok, true,
     "and works again a day later");

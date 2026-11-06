@@ -29,6 +29,8 @@
 
 import { html, raw } from "./html.js";
 
+import { STEPS as LOGIN_STEPS } from "./modules/logins.js";
+
 export const DEFAULT_COPY = {
   title: "Admin",
   loginHeading: "Sign in",
@@ -39,6 +41,7 @@ export const DEFAULT_COPY = {
   ntfyCodeIntro: "A second six-digit code has been sent to the ntfy app on your phone. It expires in 5 minutes.",
   dashboardIntro: "",
   healthTile: "Health",
+  loginsTile: "Sign-ins",
   formsIntro: "Submissions made on this domain.",
   notLiveLabel: "Not the live site",
 };
@@ -266,6 +269,27 @@ ${body}
       <thead><tr><th scope="col">Check</th><th scope="col">Status</th><th scope="col">Detail</th></tr></thead>
       <tbody>${checks.map((c) => html`<tr><td>${c.name}</td><td>${status(c.ok)}</td><td>${c.detail}</td></tr>`)}</tbody>
     </table></div>`,
+
+  /**
+   * The sign-in log, <root>/logins: each attempt (newest first) with all its
+   * steps; More is a GET for the next page. data: {attempts, next, older, unreadable}
+   */
+  loginsPage: (ctx, { attempts, next, older = false, unreadable = false }) => html`
+    <p><a href="${ctx.root}">&larr; Dashboard</a>${older ? html` · <a href="${ctx.root}/logins">Newest</a>` : ""}</p>
+    <h1>${ctx.copy.loginsTile}</h1>
+    <p class="meta">Every step of each sign-in attempt on <code>${ctx.host}</code>, newest first. An address that is not on the list is masked. Kept for 90 days.</p>
+    ${unreadable ? html`<p class="error" role="alert">The sign-in log could not be read. Have the admin database's migrations been applied?</p>` : ""}
+    ${!unreadable && !attempts.length ? html`<p class="meta">${older ? "No older attempts." : "No sign-in attempts yet."}</p>` : ""}
+    ${attempts.map((a) => html`
+    <section class="attempt">
+      <h2>${a.who || "unknown"} <small class="meta">${ctx.fmtDateTime(a.steps[0].at * 1000)}</small></h2>
+      <div class="scroll"><table>
+        <thead><tr><th scope="col">When</th><th scope="col">Step</th><th scope="col">Detail</th></tr></thead>
+        <tbody>${a.steps.map((s) => html`<tr><td>${ctx.fmtDateTime(s.at * 1000)}</td><td>${LOGIN_STEPS[s.step] ?? s.step}</td><td>${s.detail}</td></tr>`)}</tbody>
+      </table></div>
+    </section>`)}
+    ${next ? html`<form method="get" action="${ctx.root}/logins"><input type="hidden" name="before" value="${next}">
+      <div class="actions"><button type="submit" class="secondary">More</button></div></form>` : ""}`,
 
   /** data: {heading, text, back} - `back` defaults to the dashboard */
   message: (ctx, { heading, text, back = "" }) => html`<h1>${heading}</h1><p>${text}</p>

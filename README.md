@@ -52,6 +52,7 @@ Tags have no leading `v`.
 | `POST <root>/logout` | yes | |
 | `GET <root>` | yes | the dashboard: tiles only (below) |
 | `GET <root>/checks` | yes | every health check, as a table; the health tile links here |
+| `GET <root>/logins[?before=N]` | yes | the sign-in log: 10 attempts a page, each with all its steps; **More** for the next 10 |
 | `* <root><plugin.path>/...` | yes | the plugin's `fetch()` |
 
 There is no public plugin route.
@@ -63,7 +64,7 @@ A plugin is an object shaped like a Worker, mounted at ONE path segment:
 ```js
 const notes = {
   id: "notes",                    // [a-z0-9-], unique
-  path: "/notes",                 // <root>/notes/...; not /login, /logout, /health, /checks
+  path: "/notes",                 // <root>/notes/...; not /login, /logout, /health, /checks, /logins
   label: "Notes",                 // a link in the header nav (omit for none)
 
   // Required with `path`. The usual Worker signature plus `admin`. Return a
@@ -112,9 +113,11 @@ one `dashboardTile` template:
 ```
 
 `dashboard()` returns an **array** of them. Anything else (html, as before
-0.4.0) is logged and dropped, as is a malformed tile. The core adds one, `admin-health`
-(titled `copy.healthTile`): all checks passing, or how many fail, linked to
-`<root>/checks`; it is `bad` while any check fails.
+0.4.0) is logged and dropped, as is a malformed tile. The core adds two:
+`admin-health` (titled `copy.healthTile`): all checks passing, or how many fail,
+linked to `<root>/checks`; it is `bad` while any check fails. And `admin-logins`
+(titled `copy.loginsTile`, default "Sign-ins"): the latest attempt and the last
+24 hours' sign-ins and refusals, linked to `<root>/logins`; `warn` after a refusal.
 
 **Order:** `config.dashboard.order` lists tile ids to show first, in that order;
 every other tile follows alphabetically by title, ignoring any leading emoji or
@@ -189,6 +192,17 @@ the default.
 
 Codes and session tokens are stored only as SHA-256 hashes; rate limits are
 keyed by a hash of the address. No IP address is stored anywhere.
+
+**The sign-in log** (`auth_events`, migration 0006; `src/modules/logins.js`)
+records every step of every attempt, per origin: code requested (and whether a
+limit stopped it), code emailed or not, wrong code, refused (why), expired,
+phone code sent or not, signed in, signed out, and Turnstile refusals. An
+attempt is keyed by a hash of its challenge id, never the id (a live cookie);
+a session remembers it, so signing out joins the same group. An address on
+`ADMIN_USERS` is logged as itself, any other masked (`j***@g***.com (not on the
+list)`). The visitor is never told more than before, and the same writes happen
+for every address. A write that fails is logged to the console and never stops a
+sign-in. Rows older than 90 days are deleted at the next attempt.
 
 `ADMIN_USERS` (a secret) is JSON:
 

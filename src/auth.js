@@ -142,6 +142,9 @@ function sameHex(a, b) {
 
 // Salted with the challenge id and stage: an email code cannot be replayed at
 // the ntfy stage, nor one challenge's code at another.
+/** The sign-in log's key for a challenge (modules/logins.js): never the id itself, a live cookie. */
+export const attemptOf = async (challengeId) => (challengeId ? sha256(`attempt:${challengeId}`) : "");
+
 const codeHash = (id, stage, code) => sha256(`${id}:${stage}:${code}`);
 
 /** "123 456" and "123456" are the same code; anything else is not a code. */
@@ -166,9 +169,10 @@ async function underLimit(db, key, limit, windowS, now) {
 // ── the flow ──────────────────────────────────────────────────────────────────
 
 /**
- * @returns {Promise<{challengeId: string, deliver: null | {email: string, code: string}}>}
+ * @returns {Promise<{challengeId: string, deliver: null | {email: string, code: string}, limited: boolean}>}
  *   deliver is non-null only for an allowlisted address under its limits. The
  *   caller emails it in ctx.waitUntil and never tells the visitor either way.
+ *   limited (a limit was hit) is for the sign-in log only.
  *
  * The same work is done for EVERY address - both limits counted, a code made
  * and hashed - so the response time does not say whether it is on the list.
@@ -195,7 +199,7 @@ export async function startLogin({ db, users, email, now = nowS() }) {
   await db.prepare(
     "INSERT INTO challenges (id, email, stage, code_hash, attempts, created_at, expires_at) VALUES (?, ?, 'email', ?, 0, ?, ?)",
   ).bind(id, email, hash, now, now + CODE_TTL_S).run();
-  return { challengeId: id, deliver };
+  return { challengeId: id, deliver, limited: !(inWindow && inDay) };
 }
 
 /** The stage a challenge is at ("email" | "ntfy"), or null if it is gone or expired. */
@@ -208,10 +212,11 @@ export async function challengeStage({ db, challengeId, now = nowS() }) {
 
 /**
  * @returns {Promise<
- *   {ok: false, reason: "no-challenge" | "burned" | "wrong-code", attemptsLeft?: number} |
- *   {ok: true, stage: "email", ntfy: {topic: string, code: string}} |     second factor ON
- *   {ok: true, stage: string, session: {token: string, email: string, maxAge: number}}
+ *   {ok: false, reason: "no-challenge" | "burned" | "wrong-code", attemptsLeft?: number, email?: string, why?: string} |
+ *   {ok: true, stage: "email", email: string, ntfy: {topic: string, code: string}} |     second factor ON
+ *   {ok: true, stage: string, email: string, session: {token: string, email: string, maxAge: number}}
  * >}
+ * `email` and `why` are for the sign-in log only: the visitor is never told why.
  */
 export async function verifyCode({ db, users, challengeId, code, secondFactor = true, limits = DEFAULT_LIMITS, now = nowS() }) {
   if (!challengeId) return { ok: false, reason: "no-challenge" };
@@ -223,56 +228,45 @@ export async function verifyCode({ db, users, challengeId, code, secondFactor = 
      RETURNING email, stage, code_hash AS codeHash, attempts`,
   ).bind(challengeId, now).first();
   if (!row) return { ok: false, reason: "no-challenge" };
-  if (row.attempts > MAX_ATTEMPTS) {
+  const burn = async (why) => {
     await db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId).run();
-    return { ok: false, reason: "burned" };
-  }
+    return { ok: false, reason: "burned", email: row.email, why };
+  };
+  if (row.attempts > MAX_ATTEMPTS) return burn("too many wrong codes");
 
   // An address that has used up its wrong guesses for the day gets no more
   // comparisons at all, right or wrong: checked BEFORE the code is looked at.
   const failKey = await rateKey("fail", row.email);
   const fails = await db.prepare("SELECT count FROM rate WHERE key = ? AND window_start > ?")
     .bind(failKey, now - DAY_S).first();
-  if ((fails?.count ?? 0) >= FAIL_DAILY_LIMIT) {
-    await db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId).run();
-    return { ok: false, reason: "burned" };
-  }
+  if ((fails?.count ?? 0) >= FAIL_DAILY_LIMIT) return burn("the address's wrong codes for the day are used up");
 
   const given = cleanCode(code);
   const good = /^\d{6}$/.test(given) && sameHex(await codeHash(challengeId, row.stage, given), row.codeHash);
   if (!good) {
     const attemptsLeft = MAX_ATTEMPTS - row.attempts;
     await underLimit(db, failKey, FAIL_DAILY_LIMIT, DAY_S, now);
-    if (attemptsLeft <= 0) {
-      await db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId).run();
-      return { ok: false, reason: "burned" };
-    }
-    return { ok: false, reason: "wrong-code", attemptsLeft };
+    if (attemptsLeft <= 0) return burn("too many wrong codes");
+    return { ok: false, reason: "wrong-code", attemptsLeft, email: row.email, why: `${row.stage} stage, ${attemptsLeft} left` };
   }
 
   // Re-read the allowlist at every step: removing someone takes effect mid-login.
   const user = users.get(row.email);
-  if (!user) {
-    await db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId).run();
-    return { ok: false, reason: "burned" };
-  }
+  if (!user) return burn("not on the allowlist");
 
   if (secondFactor) {
     if (row.stage === "email") {
       // No topic, no second factor: fail closed rather than skip it.
-      if (!user.ntfyTopic) {
-        await db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId).run();
-        return { ok: false, reason: "burned" };
-      }
+      if (!user.ntfyTopic) return burn("no ntfy topic for the second factor");
       const ntfyCode = sixDigits();
       await db.prepare(
         "UPDATE challenges SET stage = 'ntfy', code_hash = ?, attempts = 0, expires_at = ? WHERE id = ?",
       ).bind(await codeHash(challengeId, "ntfy", ntfyCode), now + NTFY_TTL_S, challengeId).run();
-      return { ok: true, stage: "email", ntfy: { topic: user.ntfyTopic, code: ntfyCode } };
+      return { ok: true, stage: "email", email: row.email, ntfy: { topic: user.ntfyTopic, code: ntfyCode } };
     }
   }
 
-  return { ok: true, stage: row.stage, session: await issueSession({ db, challengeId, email: row.email, limits, now }) };
+  return { ok: true, stage: row.stage, email: row.email, session: await issueSession({ db, challengeId, email: row.email, limits, now }) };
 }
 
 /** Swap a passed challenge for a session. Only the token's hash is stored. */
@@ -280,8 +274,8 @@ async function issueSession({ db, challengeId, email, limits, now }) {
   const token = randomToken(32);
   await db.batch([
     db.prepare("DELETE FROM challenges WHERE id = ?").bind(challengeId),
-    db.prepare("INSERT INTO sessions (id_hash, email, created_at, expires_at, last_seen) VALUES (?, ?, ?, ?, ?)")
-      .bind(await sha256(token), email, now, now + limits.ttl, now),
+    db.prepare("INSERT INTO sessions (id_hash, email, created_at, expires_at, last_seen, attempt) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(await sha256(token), email, now, now + limits.ttl, now, await attemptOf(challengeId)),
   ]);
   return { token, email, maxAge: limits.ttl };
 }
@@ -302,12 +296,12 @@ export async function resendNtfyCode({ db, users, challengeId, now = nowS() }) {
   const user = row && users.get(row.email);
   if (!user) return { ok: false, reason: "no-challenge" };
   if (!await underLimit(db, `resend:${challengeId}`, NTFY_RESENDS, CODE_TTL_S, now)) {
-    return { ok: false, reason: "limit" };
+    return { ok: false, reason: "limit", email: row.email };
   }
   const code = sixDigits();
   await db.prepare("UPDATE challenges SET code_hash = ?, expires_at = ? WHERE id = ?")
     .bind(await codeHash(challengeId, "ntfy", code), now + NTFY_TTL_S, challengeId).run();
-  return { ok: true, ntfy: { topic: user.ntfyTopic, code } };
+  return { ok: true, email: row.email, ntfy: { topic: user.ntfyTopic, code } };
 }
 
 /** @returns {Promise<null | {email: string}>} */
@@ -329,7 +323,8 @@ export async function getSession({ db, users, token, limits = DEFAULT_LIMITS, no
   return { email: row.email };
 }
 
+/** @returns {Promise<null | {email: string, attempt: string}>} the session that ended, for the sign-in log */
 export async function endSession({ db, token }) {
-  if (!token) return;
-  await db.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(await sha256(token)).run();
+  if (!token) return null;
+  return db.prepare("DELETE FROM sessions WHERE id_hash = ? RETURNING email, attempt").bind(await sha256(token)).first();
 }

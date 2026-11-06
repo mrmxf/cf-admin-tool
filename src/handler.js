@@ -14,11 +14,13 @@
  *   POST <root>/logout
  *   GET  <root>                    signed in: the dashboard - tiles only (tiles.js)
  *   GET  <root>/checks             signed in: the health checks as a table
+ *   GET  <root>/logins[?before=N]  signed in: the sign-in log, 10 attempts a page (modules/logins.js)
  *   *    <root><plugin.path>/...   signed in: plugin.fetch(request, env, ctx, admin)
  *
  * config.dashboard.order (optional): tile ids to show first, in that order; the
- * rest are alphabetical by title (tiles.js sortTiles). The core adds one tile,
- * "admin-health", titled copy.healthTile, which links to <root>/checks.
+ * rest are alphabetical by title (tiles.js sortTiles). The core adds two tiles:
+ * "admin-health", titled copy.healthTile, which links to <root>/checks, and
+ * "admin-logins", titled copy.loginsTile, which links to <root>/logins.
  *
  * config.requireSecondFactor (default true) gates the ntfy stage - see the
  * SECOND FACTOR GATE in auth.js. Off: the emailed code alone signs you in, and
@@ -74,7 +76,8 @@ import { DEFAULT_TEMPLATES, DEFAULT_COPY, TOKENS } from "./templates.js";
 import { coreChecks, coreFlags } from "./modules/health.js";
 import { dateFormatters } from "./dates.js";
 import { CSP } from "./csp.js";
-import { checkTile, sortTiles, healthTile } from "./tiles.js";
+import { checkTile, sortTiles, healthTile, loginsTile } from "./tiles.js";
+import { attemptOf, listAttempts, loginSummary, logStep, pruneLog, whoFor } from "./modules/logins.js";
 
 const CHALLENGE_COOKIE = "__Host-admin-ch";
 const SESSION_COOKIE = "__Host-admin-s";
@@ -98,7 +101,7 @@ const DEFAULT_HEADERS = {
 const ROOT = /^(\/[a-z0-9_-]+)+$/;
 const PLUGIN_ID = /^[a-z0-9-]{1,40}$/;
 const MOUNT = /^\/[a-z0-9-]{1,40}$/;
-const RESERVED = new Set(["/login", "/logout", "/health", "/checks"]);
+const RESERVED = new Set(["/login", "/logout", "/health", "/checks", "/logins"]);
 const HOOKS = ["fetch", "dashboard", "health", "flags"];
 
 export function normaliseRoot(r) {
@@ -277,6 +280,8 @@ export function createAdmin(config) {
       const limits = sessionLimits(env);
       const jar = readCookies(request);
       const clearChallenge = cookie(CHALLENGE_COOKIE, "", 0);
+      // The sign-in log (modules/logins.js): never throws, never changes a response.
+      const log = (attempt, who, step, detail = "") => logStep(db, { origin: url.origin, attempt, who, step, detail });
 
       // ── sign in ────────────────────────────────────────────────────────────
       if (path === "/login") {
@@ -292,15 +297,25 @@ export function createAdmin(config) {
         const ts = await verifyTurnstile(form.get("cf-turnstile-response"), env.TURNSTILE_SECRET_KEY, url.hostname);
         if (!ts.ok) {
           console.log(`[admin] login refused: turnstile ${ts.reason}`);
+          await log("", whoFor(users, email), "turnstile-refused", ts.reason);
           return page("Sign in", templates.loginEmail(c, {
             error: "The anti-spam check did not pass. Please try again.", email, siteKey,
           }), { status: 400, turnstile: true });
         }
-        const { challengeId, deliver } = await startLogin({ db, users, email });
+        const { challengeId, deliver, limited } = await startLogin({ db, users, email });
+        // The same two writes for every address: the log adds no timing difference.
+        const attempt = await attemptOf(challengeId);
+        await pruneLog(db);
+        await log(attempt, whoFor(users, email), "code-requested",
+          deliver ? "" : limited && users.has(String(email).trim().toLowerCase()) ? "a send limit was hit: no code sent" : "no code sent");
         if (deliver) {
           ctx.waitUntil(sendEmailCode({
             env, site: config.site, request, to: deliver.email, code: deliver.code, minutes: CODE_TTL_S / 60, secondFactor,
-          }).catch((err) => console.log(`[admin] email code failed: ${err.message}`)));
+          }).then((r) => log(attempt, deliver.email, r?.ok ? "code-emailed" : "code-not-sent", r?.ok ? (r.dryRun ? "dry run" : "") : r?.reason))
+            .catch((err) => {
+              console.log(`[admin] email code failed: ${err.message}`);
+              return log(attempt, deliver.email, "code-not-sent", err.message);
+            }));
         }
         return redirect(`${root}/login/code`, [cookie(CHALLENGE_COOKIE, challengeId, CODE_TTL_S)]);
       }
@@ -314,7 +329,11 @@ export function createAdmin(config) {
         }
         const form = await request.formData();
         const r = await verifyCode({ db, users, challengeId, code: form.get("code"), secondFactor, limits });
+        const attempt = await attemptOf(challengeId);
+        const who = r.email ? whoFor(users, r.email) : "";
         if (!r.ok) {
+          if (r.reason === "no-challenge") await log(attempt, who, "expired", "a code was entered after the sign-in had ended");
+          else await log(attempt, who, r.reason === "wrong-code" ? "wrong-code" : "refused", r.why);
           if (r.reason !== "wrong-code") return redirect(`${root}/login?restart=1`, [clearChallenge]);
           const stage = await challengeStage({ db, challengeId });
           return page("Sign in", templates.loginCode(c, {
@@ -328,19 +347,23 @@ export function createAdmin(config) {
             const sent = await sendNtfyCode({
               env, site: config.site, request, topic: r.ntfy.topic, code: r.ntfy.code, minutes: NTFY_TTL_S / 60,
             });
+            await log(attempt, who, sent.ok ? "phone-code-sent" : "phone-code-not-sent", sent.ok ? "email code right" : sent.reason);
             if (!sent.ok) return page("Sign in", templates.loginCode(c, { stage: "ntfy", error: ntfyFailed(sent) }), { status: 502 });
             return redirect(`${root}/login/code`);
           }
         }
         console.log(`[admin] signed in: ${r.session.email}`);
+        await log(attempt, who, "signed-in");
         return redirect(root, [clearChallenge, cookie(SESSION_COOKIE, r.session.token, r.session.maxAge)]);
       }
 
       if (secondFactor) {
         if (path === "/login/resend" && method === "POST") {
           const r = await resendNtfyCode({ db, users, challengeId: jar[CHALLENGE_COOKIE] });
+          const attempt = await attemptOf(jar[CHALLENGE_COOKIE]);
           if (!r.ok && r.reason === "no-challenge") return redirect(`${root}/login?restart=1`, [clearChallenge]);
           if (!r.ok) {
+            await log(attempt, r.email ?? "", "refused", "phone code resends used up");
             return page("Sign in", templates.loginCode(c, {
               stage: "ntfy", error: "No more phone codes can be sent for this sign-in. Please start again later.",
             }), { status: 429 });
@@ -348,6 +371,7 @@ export function createAdmin(config) {
           const sent = await sendNtfyCode({
             env, site: config.site, request, topic: r.ntfy.topic, code: r.ntfy.code, minutes: NTFY_TTL_S / 60,
           });
+          await log(attempt, r.email ?? "", sent.ok ? "phone-code-sent" : "phone-code-not-sent", sent.ok ? "resent" : sent.reason);
           if (!sent.ok) return page("Sign in", templates.loginCode(c, { stage: "ntfy", error: ntfyFailed(sent) }), { status: 502 });
           return page("Sign in", templates.loginCode(c, {
             stage: "ntfy", notice: "A new code has been sent to your phone. Earlier codes no longer work.",
@@ -356,7 +380,8 @@ export function createAdmin(config) {
       }
 
       if (path === "/logout" && method === "POST") {
-        await endSession({ db, token: jar[SESSION_COOKIE] });
+        const ended = await endSession({ db, token: jar[SESSION_COOKIE] });
+        if (ended) await log(ended.attempt, ended.email, "signed-out");
         return redirect(`${root}/login`, [cookie(SESSION_COOKIE, "", 0)]);
       }
 
@@ -392,10 +417,16 @@ export function createAdmin(config) {
           () => p.health(env, adminFor(p)))),
       ]).then((all) => all.flat());
 
-      if (path === "/" || path === "/checks") {
+      if (path === "/" || path === "/checks" || path === "/logins") {
         if (!GET) return text("Method not allowed", 405, { allow: "GET, HEAD" });
         if (path === "/checks") return page(copy.healthTile, templates.healthPage(c, { checks: await checks() }));
-        const [all, extra] = await Promise.all([
+        if (path === "/logins") {
+          const before = Number(url.searchParams.get("before"));
+          const list = await listAttempts(db, { origin: url.origin, before: Number.isInteger(before) && before > 0 ? before : null })
+            .catch((err) => { console.log(`[admin] sign-in log unreadable: ${err.message}`); return null; });
+          return page(copy.loginsTile, templates.loginsPage(c, { ...(list ?? { attempts: [], next: null }), unreadable: !list, older: url.searchParams.has("before") }), { wide: true });
+        }
+        const [all, extra, logins] = await Promise.all([
           checks(),
           Promise.all(plugins.filter((p) => p.dashboard).map(async (p) => {
             const tiles = await guarded(p, "dashboard", [], () => p.dashboard(env, adminFor(p)));
@@ -405,8 +436,13 @@ export function createAdmin(config) {
             }
             return tiles.map((t) => checkTile(t, `plugin ${p.id}`)).filter(Boolean);
           })),
+          loginSummary(db, { origin: url.origin }).catch((err) => { console.log(`[admin] sign-in log unreadable: ${err.message}`); return null; }),
         ]);
-        const tiles = sortTiles([healthTile(all, { title: copy.healthTile, href: `${root}/checks` }), ...extra.flat()], tileOrder);
+        const tiles = sortTiles([
+          healthTile(all, { title: copy.healthTile, href: `${root}/checks` }),
+          loginsTile(logins, { title: copy.loginsTile, href: `${root}/logins`, fmtDateTime }),
+          ...extra.flat(),
+        ], tileOrder);
         return page("Dashboard", templates.dashboard(c, { tiles }));
       }
 

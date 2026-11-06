@@ -56,6 +56,10 @@ releases.yaml      version history, newest first. NOT a golang project: tags hav
   replaces those blocks, nothing else.
 - **Rate limits are keyed by a hash of the address**, never the address. No IP address
   is stored anywhere.
+- **The sign-in log** (`src/modules/logins.js`) stores an allowlisted address in full,
+  any other only masked (`maskEmail`), and an attempt only as a hash of its challenge
+  id. Its writes never throw and never change a response, and are the same for every
+  address. It is the one ADMIN_DB table that deletes: rows past 90 days (`pruneLog`).
 - **Codes and session tokens are stored only as SHA-256 hashes.**
 - **FORM_DB is read-only**: all its SQL through `select()` in `src/modules/forms.js`.
   Every forms query is same-origin filtered on `url`; never drop that. Never migrate it.

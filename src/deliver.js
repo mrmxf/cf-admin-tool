@@ -29,13 +29,16 @@ const headerSafe = (s) => String(s ?? "").replace(/[\r\n]+/g, " ").trim();
 
 export async function sendEmailCode({ env, site, request, to, code, minutes, secondFactor = true }) {
   if (env.DRY_RUN === "true") {
-    if (isLocalDev(request, env)) console.log(`[admin] DRY RUN email code for ${to}: ${code}`);
-    else console.log("[admin] DRY RUN on a non-local host: email code NOT delivered");
-    return;
+    if (isLocalDev(request, env)) {
+      console.log(`[admin] DRY RUN email code for ${to}: ${code}`);
+      return { ok: true, dryRun: true };
+    }
+    console.log("[admin] DRY RUN on a non-local host: email code NOT delivered");
+    return { ok: false, reason: "DRY_RUN on a non-local host" };
   }
   if (!env.MAILTRAP_API_TOKEN || !env.ADMIN_SENDER) {
     console.log("[admin] email code NOT sent: MAILTRAP_API_TOKEN or ADMIN_SENDER missing");
-    return;
+    return { ok: false, reason: "MAILTRAP_API_TOKEN or ADMIN_SENDER missing" };
   }
   const origin = new URL(request.url).origin;
   const res = await fetch(MAILTRAP_URL, {
@@ -56,7 +59,9 @@ export async function sendEmailCode({ env, site, request, to, code, minutes, sec
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     console.log(`[admin] email code NOT sent: mailtrap ${res.status} ${detail.slice(0, 200)}`);
+    return { ok: false, reason: `mailtrap ${res.status}` };
   }
+  return { ok: true };
 }
 
 /**

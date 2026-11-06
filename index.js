@@ -31,3 +31,4 @@ export { withEvents, latestEvents, eventLog, appendEvent, checkEvent, isEventOf 
 export { readSetting, settingHistory, appendSetting } from "./src/modules/settings.js";
 export { workflowEvent, eventText, columnText } from "./src/views.js";
 export { sortTiles, sortKey } from "./src/tiles.js";
+export { listAttempts, loginSummary, maskEmail } from "./src/modules/logins.js";

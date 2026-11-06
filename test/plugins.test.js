@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { fakeD1, AUTH_MIGRATIONS } from "./d1.js";
+import { fakeD1, AUTH_MIGRATIONS, LOGINS_MIGRATION } from "./d1.js";
 import { createAdmin, normalisePlugins, html } from "../index.js";
 import { startLogin, verifyCode, parseUsers } from "../src/auth.js";
 import { verifyTurnstile } from "../src/turnstile.js";
@@ -43,7 +43,7 @@ const admin = createAdmin({ site: SITE, requireSecondFactor: false, plugins: [ec
 
 let env, realLog, realFetch;
 beforeEach(() => {
-  env = { ADMIN_DB: fakeD1(AUTH_MIGRATIONS), ADMIN_USERS: USERS, DRY_RUN: "true", TURNSTILE_SITE_KEY: "s", TURNSTILE_SECRET_KEY: "s" };
+  env = { ADMIN_DB: fakeD1(AUTH_MIGRATIONS, LOGINS_MIGRATION), ADMIN_USERS: USERS, DRY_RUN: "true", TURNSTILE_SITE_KEY: "s", TURNSTILE_SECRET_KEY: "s" };
   seen = null;
   realLog = console.log;
   console.log = () => {};
@@ -109,7 +109,7 @@ test("the dashboard has each plugin's tile, nav link and health; a failing plugi
   assert.doesNotMatch(page, /dropped|>old</, "a bad tile and an html dashboard() are dropped");
   assert.match(page, /<div class="tile bad" id="tile-admin-health">[\s\S]*?❌ 1 of \d+ checks failing/, "the failing plugin health shows on the health tile");
   const order = [...page.matchAll(/id="tile-([a-z-]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(order, ["apple", "echo", "admin-health", "zebra"], "alphabetical, emoji ignored");
+  assert.deepEqual(order, ["apple", "echo", "admin-health", "admin-logins", "zebra"], "alphabetical, emoji ignored");
   const checks = await (await call("/admin/checks", { cookie: await session() })).text();
   assert.match(checks, /<td>Echo<\/td>/);
   assert.match(checks, /<td>Plugin: broken<\/td><td><span class="status bad">/);
@@ -122,7 +122,7 @@ test("dashboard.order puts those tiles first; the rest stay alphabetical", async
   const ordered = createAdmin({ site: SITE, requireSecondFactor: false, plugins: [echo, alpha], dashboard: { order: ["zebra", "admin-health"] } });
   const auth = await session();
   const page = await (await ordered.fetch(new Request(`${ORIGIN}/admin`, { headers: { cookie: auth } }), env, { waitUntil() {} })).text();
-  assert.deepEqual([...page.matchAll(/id="tile-([a-z-]+)"/g)].map((m) => m[1]), ["zebra", "admin-health", "apple", "echo"]);
+  assert.deepEqual([...page.matchAll(/id="tile-([a-z-]+)"/g)].map((m) => m[1]), ["zebra", "admin-health", "apple", "echo", "admin-logins"]);
   assert.throws(() => createAdmin({ site: SITE, dashboard: { order: "zebra" } }), /dashboard.order/);
   assert.throws(() => normalisePlugins([{ id: "a", path: "/checks", fetch() {} }]), /must be one segment/, "/checks is the core's");
 });

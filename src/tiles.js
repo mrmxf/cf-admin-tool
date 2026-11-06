@@ -15,6 +15,10 @@
  * symbols ignored ("🅿️status" sorts as "status").
  */
 
+import { STEPS } from "./modules/logins.js";
+
+const STEP_LABEL = (step) => STEPS[step] ?? step;
+
 const ID = /^[a-z0-9-]{1,40}$/;
 const TONES = new Set(["ok", "warn", "bad"]);
 
@@ -52,4 +56,17 @@ export function healthTile(checks, { title, href }) {
     : unknown ? `✅ ${checks.length - unknown} checks pass` : `✅ all ${checks.length} checks pass`];
   if (unknown) lines.push(`❓ ${unknown} unknown`);
   return { id: "admin-health", title, href, lines, tone: failing ? "bad" : unknown ? "warn" : "ok" };
+}
+
+/**
+ * The core's sign-in tile: the latest attempt and the last 24 hours, from
+ * modules/logins.js loginSummary (null = the log could not be read).
+ */
+export function loginsTile(summary, { title, href, fmtDateTime = String }) {
+  if (!summary) return { id: "admin-logins", title, href, lines: ["❓ the sign-in log could not be read"], tone: "warn" };
+  const { ok, bad, latest } = summary;
+  const last = latest?.steps.at(-1);
+  const lines = [latest ? `latest: ${latest.who || "unknown"}, ${STEP_LABEL(last.step)}, ${fmtDateTime(last.at * 1000)}` : "no sign-ins yet",
+    `24 h: ${ok} signed in, ${bad} refused`];
+  return { id: "admin-logins", title, href, lines, tone: bad ? "warn" : "ok" };
 }
