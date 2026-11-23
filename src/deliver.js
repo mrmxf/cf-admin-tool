@@ -1,5 +1,9 @@
 /**
- * Getting a login code to a person: by email (Mailtrap) and by push (ntfy).
+ * Getting a login code to a person: by email (Brevo or Mailtrap) and by push (ntfy).
+ *
+ * EMAIL PROVIDER: Brevo when BREVO_API_KEY is set, otherwise Mailtrap
+ * (MAILTRAP_API_TOKEN). Both the code email and sendMail go through postMail,
+ * which takes one provider-neutral message and maps it to that provider's API.
  *
  * Both are called from ctx.waitUntil, after the response has gone, so a slow
  * or failed send cannot change what the visitor sees or how long it takes.
@@ -16,6 +20,48 @@
  */
 
 const MAILTRAP_URL = "https://send.api.mailtrap.io/api/send";
+const BREVO_URL = "https://api.brevo.com/v3/smtp/email";
+
+/** Which provider this env sends through: "brevo", "mailtrap", or null (not configured). */
+export const mailProvider = (env) => env.BREVO_API_KEY ? "brevo" : env.MAILTRAP_API_TOKEN ? "mailtrap" : null;
+
+/**
+ * One message to the configured provider. `msg` is provider-neutral:
+ * {from: {email, name}, to: [{email}], cc?: [{email}], replyTo?, subject, text, html?,
+ * category, attachments?}. Attachments are Mailtrap's shape; Brevo gets each as
+ * {name, content} only, so an inline (cid:) image arrives as a plain attachment.
+ * Throws only if fetch throws; otherwise the provider's Response.
+ */
+export function postMail(env, msg) {
+  if (mailProvider(env) === "brevo") {
+    const body = {
+      sender: msg.from,
+      to: msg.to,
+      subject: msg.subject,
+      textContent: msg.text,
+      tags: [msg.category],
+    };
+    if (msg.html) body.htmlContent = msg.html;
+    if (msg.cc) body.cc = msg.cc;
+    if (msg.replyTo) body.replyTo = { email: msg.replyTo };
+    if (msg.attachments?.length) body.attachment = msg.attachments.map((a) => ({ name: a.filename, content: a.content }));
+    return fetch(BREVO_URL, {
+      method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+  const body = { from: msg.from, to: msg.to, subject: msg.subject, text: msg.text, category: msg.category };
+  if (msg.html) body.html = msg.html;
+  if (msg.cc) body.cc = msg.cc;
+  if (msg.replyTo) body.headers = { "Reply-To": msg.replyTo };
+  if (msg.attachments?.length) body.attachments = msg.attachments;
+  return fetch(MAILTRAP_URL, {
+    method: "POST",
+    headers: { "Api-Token": env.MAILTRAP_API_TOKEN, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 export const DEFAULT_NTFY_SERVER = "https://ntfy.sh";
 const NTFY_TIMEOUT_MS = 8000;
 
@@ -44,15 +90,15 @@ export async function sendEmailCode({ env, site, request, to, code, minutes, sec
     console.log("[admin] DRY RUN on a non-local host: email code NOT delivered");
     return { ok: false, reason: "DRY_RUN on a non-local host" };
   }
-  if (!env.MAILTRAP_API_TOKEN || !env.ADMIN_SENDER) {
-    console.log("[admin] email code NOT sent: MAILTRAP_API_TOKEN or ADMIN_SENDER missing");
-    return { ok: false, reason: "MAILTRAP_API_TOKEN or ADMIN_SENDER missing" };
+  const provider = mailProvider(env);
+  if (!provider || !env.ADMIN_SENDER) {
+    console.log("[admin] email code NOT sent: BREVO_API_KEY (or MAILTRAP_API_TOKEN) or ADMIN_SENDER missing");
+    return { ok: false, reason: "BREVO_API_KEY (or MAILTRAP_API_TOKEN) or ADMIN_SENDER missing" };
   }
   const origin = new URL(request.url).origin;
-  const res = await fetch(MAILTRAP_URL, {
-    method: "POST",
-    headers: { "Api-Token": env.MAILTRAP_API_TOKEN, "content-type": "application/json" },
-    body: JSON.stringify({
+  let res;
+  try {
+    res = await postMail(env, {
       from: { email: env.ADMIN_SENDER, name: headerSafe(`${site.name} admin`) },
       to: [{ email: to }],
       subject: codeSubject(site, code, codeInSubject),
@@ -62,12 +108,15 @@ export async function sendEmailCode({ env, site, request, to, code, minutes, sec
         `It expires in ${minutes} minutes.` +
         (secondFactor ? ` After this you will be asked for a second\ncode, sent to the ntfy app on your phone.` : "") + `\n\n` +
         `If you did not just try to log in at ${origin}, ignore this email.\n`,
-    }),
-  });
+    });
+  } catch (err) {
+    console.log(`[admin] email code NOT sent: ${provider} ${err.message}`);
+    return { ok: false, reason: `${provider} could not be reached` };
+  }
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    console.log(`[admin] email code NOT sent: mailtrap ${res.status} ${detail.slice(0, 200)}`);
-    return { ok: false, reason: `mailtrap ${res.status}` };
+    console.log(`[admin] email code NOT sent: ${provider} ${res.status} ${detail.slice(0, 200)}`);
+    return { ok: false, reason: `${provider} ${res.status}` };
   }
   return { ok: true };
 }
@@ -137,6 +186,8 @@ const EMAIL = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
  * ATTACHMENTS (optional) are Mailtrap's own shape, [{filename, type, content: base64,
  * disposition?: "attachment" | "inline", content_id?}]. An inline image is <img
  * src="cid:<content_id>"> in the html: most mail clients block a data: URI.
+ * With Brevo, only filename and content are sent: an inline image becomes an
+ * ordinary attachment and the cid: reference does not resolve.
  *
  * DRY RUN: printed in full on localhost and reported as sent; on any other host
  * nothing is printed and it reports NOT sent.
@@ -156,7 +207,7 @@ export async function sendMail({ env, request, from, fromName, to, cc = "", repl
   };
   // cc is ours (a var), not the public's; one that does not look right is dropped, not sent.
   if (cc && EMAIL.test(headerSafe(cc))) payload.cc = [{ email: headerSafe(cc) }];
-  if (replyTo && EMAIL.test(headerSafe(replyTo))) payload.headers = { "Reply-To": headerSafe(replyTo) };
+  if (replyTo && EMAIL.test(headerSafe(replyTo))) payload.replyTo = headerSafe(replyTo);
   if (attachments.length) payload.attachments = attachments;
   if (env.DRY_RUN === "true") {
     if (!isLocalDev(request, env)) {
@@ -164,20 +215,17 @@ export async function sendMail({ env, request, from, fromName, to, cc = "", repl
       return { ok: false, reason: "dry run on a non-local host" };
     }
     console.log(`[admin] DRY RUN workflow email\nTo: ${to}\nFrom: ${payload.from.name} <${payload.from.email}>\n` +
-      `Cc: ${payload.cc?.[0].email ?? ""}\nReply-To: ${payload.headers?.["Reply-To"] ?? ""}\nSubject: ${payload.subject}\n` +
+      `Cc: ${payload.cc?.[0].email ?? ""}\nReply-To: ${payload.replyTo ?? ""}\nSubject: ${payload.subject}\n` +
       `Attachments: ${attachments.map((a) => a.filename).join(", ")}\n\n${text}\n`);
     return { ok: true, dryRun: true };
   }
-  if (!env.MAILTRAP_API_TOKEN || !payload.from.email) return { ok: false, reason: "mail is not configured" };
+  const provider = mailProvider(env);
+  if (!provider || !payload.from.email) return { ok: false, reason: "mail is not configured" };
   try {
-    const res = await fetch(MAILTRAP_URL, {
-      method: "POST",
-      headers: { "Api-Token": env.MAILTRAP_API_TOKEN, "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await postMail(env, payload);
     if (res.ok) return { ok: true };
     const detail = await res.text().catch(() => "");
-    console.log(`[admin] workflow email NOT sent: mailtrap ${res.status} ${detail.slice(0, 200)}`);
+    console.log(`[admin] workflow email NOT sent: ${provider} ${res.status} ${detail.slice(0, 200)}`);
     return { ok: false, reason: `the mail service answered ${res.status}` };
   } catch (err) {
     console.log(`[admin] workflow email NOT sent: ${err.message}`);

@@ -11,6 +11,7 @@
  */
 
 import { parseUsers } from "../auth.js";
+import { mailProvider } from "../deliver.js";
 
 const FORM_HEALTH_TIMEOUT_MS = 3000;
 
@@ -55,7 +56,7 @@ export async function coreFlags(env, { secondFactor = true } = {}) {
   return {
     adminDb: (await dbPing(env.ADMIN_DB, "SELECT 1 FROM sessions LIMIT 1")).ok,
     usersConfigured: users.size > 0,
-    mailConfigured: Boolean(env.MAILTRAP_API_TOKEN && env.ADMIN_SENDER),
+    mailConfigured: Boolean(mailProvider(env) && env.ADMIN_SENDER),
     turnstileConfigured: Boolean(env.TURNSTILE_SECRET_KEY && env.TURNSTILE_SITE_KEY),
     dryRun: env.DRY_RUN === "true",
     secondFactor,
@@ -69,9 +70,11 @@ export async function coreChecks(env, { secondFactor = true } = {}) {
     { name: "Admin database (ADMIN_DB)", ...await dbPing(env.ADMIN_DB, "SELECT 1 FROM sessions LIMIT 1") },
     { name: "Admin users", ok: users.size > 0, detail: error ?? `${users.size} on the allowlist` },
     {
-      name: "Login email (Mailtrap)",
-      ok: env.DRY_RUN === "true" ? null : Boolean(env.MAILTRAP_API_TOKEN && env.ADMIN_SENDER),
-      detail: env.DRY_RUN === "true" ? "dry run - codes printed to the console" : (env.ADMIN_SENDER || "ADMIN_SENDER missing"),
+      name: `Login email (${mailProvider(env) === "brevo" ? "Brevo" : "Mailtrap"})`,
+      ok: env.DRY_RUN === "true" ? null : Boolean(mailProvider(env) && env.ADMIN_SENDER),
+      detail: env.DRY_RUN === "true" ? "dry run - codes printed to the console"
+        : !mailProvider(env) ? "BREVO_API_KEY (or MAILTRAP_API_TOKEN) missing"
+        : (env.ADMIN_SENDER || "ADMIN_SENDER missing"),
     },
     secondFactor === false
       ? { name: "Second factor (ntfy)", ok: null, detail: "OFF - sign-in is the emailed code alone (requireSecondFactor: false)" }

@@ -21,7 +21,7 @@ index.js           the public entry point — every export goes through it
 src/handler.js     createAdmin: sign-in routes, the dashboard, the plugin router,
                    and everything the core enforces on plugins
 src/auth.js        challenges, codes, sessions, rate limits (ADMIN_DB)
-src/deliver.js     the code email (Mailtrap), the push code (ntfy), sendMail
+src/deliver.js     the code email (Brevo or Mailtrap), the push code (ntfy), sendMail
 src/turnstile.js   siteverify, with the hostname check
 src/html.js        html`` (escapes everything) and raw()
 src/templates.js   the core templates, DEFAULT_COPY, the theme CSS

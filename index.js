@@ -18,7 +18,7 @@ export { DEFAULT_TEMPLATES, DEFAULT_COPY } from "./src/templates.js";
 export { FORMS_TEMPLATES, markdownHelp, markdownPane, markdownMode } from "./src/plugins/forms-templates.js";
 export { parseUsers } from "./src/auth.js";
 export { approvalWorkflow, mailBody, mailDocument, PREVIEW_SCRIPT } from "./src/approval.js";
-export { sendMail } from "./src/deliver.js";
+export { sendMail, mailProvider } from "./src/deliver.js";
 export { renderMarkdown, markdownText, fill, escapeMd } from "./src/markdown.js";
 export { dateFormatters } from "./src/dates.js";
 export { FIXED, mergePatch, diffPatch, changes, editable, checkPatch, isObject } from "./src/patch.js";

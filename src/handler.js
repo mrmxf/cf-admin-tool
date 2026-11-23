@@ -56,7 +56,8 @@
  *   ADMIN_DB              D1: login state (and formsPlugin's workflow log): db/migrations
  *   ADMIN_USERS           secret JSON allowlist - see auth.js parseUsers
  *   ADMIN_SENDER          From: address of the login-code email
- *   MAILTRAP_API_TOKEN    secret
+ *   BREVO_API_KEY         secret: send email through Brevo (preferred when set)
+ *   MAILTRAP_API_TOKEN    secret: or through Mailtrap, when BREVO_API_KEY is not set
  *   TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY
  *   NTFY_SERVER           optional, default https://ntfy.sh
  *   NTFY_TOKEN            optional secret, for a server with access control
